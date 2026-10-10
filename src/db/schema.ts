@@ -88,12 +88,30 @@ export const verification = sqliteTable("verification", {
  * Wing Wars tables
  * ────────────────────────────────────────────────────────────── */
 
-/** A restaurant / bar / shack that serves wings. */
+/**
+ * A canonical kind of wing — "Buffalo", "Lemon Pepper", "Garlic Parmesan" —
+ * so the same type can be compared across restaurants.
+ */
+export const wingTypes = sqliteTable("wing_types", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  emoji: text("emoji").notNull().default("🍗"),
+  description: text("description").notNull().default(""),
+  createdById: text("created_by_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  createdAt: createdAt(),
+});
+
+/** A restaurant / bar / shack that serves wings. Spots are judged too. */
 export const spots = sqliteTable("spots", {
   id: id(),
   name: text("name").notNull(),
   neighborhood: text("neighborhood").notNull().default(""),
   description: text("description").notNull().default(""),
+  elo: integer("elo").notNull().default(1200),
+  wins: integer("wins").notNull().default(0),
+  losses: integer("losses").notNull().default(0),
   createdById: text("created_by_id").references(() => user.id, {
     onDelete: "set null",
   }),
@@ -109,6 +127,9 @@ export const wings = sqliteTable(
       .notNull()
       .references(() => spots.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    wingTypeId: text("wing_type_id").references(() => wingTypes.id, {
+      onDelete: "set null",
+    }),
     style: text("style", { enum: ["bone-in", "boneless"] })
       .notNull()
       .default("bone-in"),
@@ -123,7 +144,11 @@ export const wings = sqliteTable(
     }),
     createdAt: createdAt(),
   },
-  (t) => [index("wings_spot_idx").on(t.spotId), index("wings_elo_idx").on(t.elo)],
+  (t) => [
+    index("wings_spot_idx").on(t.spotId),
+    index("wings_elo_idx").on(t.elo),
+    index("wings_type_idx").on(t.wingTypeId),
+  ],
 );
 
 /**
@@ -211,8 +236,71 @@ export const tastings = sqliteTable(
   ],
 );
 
+/** A head-to-head battle between two restaurants, judged on the whole experience. */
+export const spotBattles = sqliteTable(
+  "spot_battles",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    spotAId: text("spot_a_id")
+      .notNull()
+      .references(() => spots.id, { onDelete: "cascade" }),
+    spotBId: text("spot_b_id")
+      .notNull()
+      .references(() => spots.id, { onDelete: "cascade" }),
+    winnerId: text("winner_id")
+      .notNull()
+      .references(() => spots.id, { onDelete: "cascade" }),
+    eloBeforeA: integer("elo_before_a").notNull(),
+    eloBeforeB: integer("elo_before_b").notNull(),
+    eloDeltaA: integer("elo_delta_a").notNull(),
+    eloDeltaB: integer("elo_delta_b").notNull(),
+    verdict: text("verdict").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("spot_battles_user_idx").on(t.userId),
+    index("spot_battles_a_idx").on(t.spotAId),
+    index("spot_battles_b_idx").on(t.spotBId),
+    index("spot_battles_created_idx").on(t.createdAt),
+  ],
+);
+
+/** One person's scorecard for a restaurant. Spot battles create two of these. */
+export const spotReviews = sqliteTable(
+  "spot_reviews",
+  {
+    id: id(),
+    spotId: text("spot_id")
+      .notNull()
+      .references(() => spots.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    spotBattleId: text("spot_battle_id").references(() => spotBattles.id, {
+      onDelete: "cascade",
+    }),
+    wingGame: integer("wing_game").notNull(),
+    sides: integer("sides").notNull(),
+    vibe: integer("vibe").notNull(),
+    service: integer("service").notNull(),
+    value: integer("value").notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("spot_reviews_spot_idx").on(t.spotId),
+    index("spot_reviews_user_idx").on(t.userId),
+  ],
+);
+
+export type WingType = typeof wingTypes.$inferSelect;
 export type Spot = typeof spots.$inferSelect;
 export type Wing = typeof wings.$inferSelect;
 export type Battle = typeof battles.$inferSelect;
 export type Tasting = typeof tastings.$inferSelect;
 export type Tournament = typeof tournaments.$inferSelect;
+export type SpotBattle = typeof spotBattles.$inferSelect;
+export type SpotReview = typeof spotReviews.$inferSelect;

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { EloDelta, LeafShower, RankBadge } from "@/components/bits";
+import { EloDelta, LeafShower, RankBadge, TapeRow } from "@/components/bits";
 import { Radar } from "@/components/radar";
 import { WingSpirit } from "@/components/wing-spirit";
 import { timeAgo } from "@/lib/format";
@@ -149,22 +149,6 @@ export default async function BattlePage({ params, searchParams }: PageProps<"/b
       <p className="mt-4 text-center text-xs text-ink-soft">
         New ratings: {battle.a.name} {newEloA} · {battle.b.name} {newEloB}
       </p>
-    </div>
-  );
-}
-
-function TapeRow({ label, a, b, max, bold }: { label: string; a: number; b: number; max: number; bold?: boolean }) {
-  return (
-    <div className={`grid grid-cols-[2.5rem_1fr_6.5rem_1fr_2.5rem] items-center gap-2 ${bold ? "border-t border-line pt-4" : ""}`}>
-      <span className={`text-right tabular-nums ${a > b ? "font-bold text-sauce" : ""} ${bold ? "font-display text-xl" : ""}`}>{a}</span>
-      <div className="flex h-3 justify-end overflow-hidden rounded-full bg-paper-2">
-        <div className="rounded-full bg-sauce" style={{ width: `${(a / max) * 100}%` }} />
-      </div>
-      <span className={`text-center text-sm ${bold ? "font-bold uppercase tracking-wider" : "font-bold"}`}>{label}</span>
-      <div className="flex h-3 overflow-hidden rounded-full bg-paper-2">
-        <div className="rounded-full bg-moss" style={{ width: `${(b / max) * 100}%` }} />
-      </div>
-      <span className={`tabular-nums ${b > a ? "font-bold text-moss" : ""} ${bold ? "font-display text-xl" : ""}`}>{b}</span>
     </div>
   );
 }

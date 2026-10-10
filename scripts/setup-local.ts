@@ -4,12 +4,14 @@
  */
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { createDb, databaseUrl } from "@/db/client";
+import { ensureWingTypes } from "@/lib/wing-types";
 import { seed } from "./seed";
 
 async function main() {
   const url = databaseUrl();
   const db = createDb();
   await migrate(db, { migrationsFolder: "drizzle" });
+  await ensureWingTypes(db);
   console.log(`🍃 Database ready (${url.startsWith("file:") ? url : "remote"})`);
   const shouldSeed = url.startsWith("file:") || process.argv.includes("--seed");
   if (shouldSeed && !process.argv.includes("--no-seed")) await seed(db);

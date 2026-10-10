@@ -3,11 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { EmptyState, SectionTitle, StatPill } from "@/components/bits";
-import { BattleCard } from "@/components/cards";
+import { BattleCard, SpotBattleCard } from "@/components/cards";
 import { WingSpirit } from "@/components/wing-spirit";
 import { timeAgo } from "@/lib/format";
 import { getJudge } from "@/lib/queries";
-import { MAX_TOTAL, total } from "@/lib/scoring";
+import { MAX_SPOT_TOTAL, MAX_TOTAL, spotTotal, total } from "@/lib/scoring";
 
 export const metadata: Metadata = { title: "Judge" };
 
@@ -24,7 +24,7 @@ export default async function JudgePage({ params }: PageProps<"/judges/[id]">) {
   const { id } = await params;
   const data = await getJudge(id);
   if (!data) notFound();
-  const { judge, tastings, battleCount, tastedWingCount, battles } = data;
+  const { judge, tastings, reviews, battleCount, spotBattleCount, tastedWingCount, battles, spotBattles } = data;
   const now = new Date();
   const favorite = [...tastings].sort((a, b) => total(b.tasting) - total(a.tasting))[0];
 
@@ -35,13 +35,14 @@ export default async function JudgePage({ params }: PageProps<"/judges/[id]">) {
           {judge.name.slice(0, 1).toUpperCase()}
         </div>
         <div className="flex-1 text-center sm:text-left">
-          <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">📓 {judgeTitle(battleCount)}</p>
+          <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">📓 {judgeTitle(battleCount + spotBattleCount)}</p>
           <h1 className="text-4xl font-semibold">{judge.name}</h1>
           <p className="text-ink-soft">Wandering the wing lands since {judge.createdAt.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</p>
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <StatPill label="Battles" value={battleCount} />
-            <StatPill label="Scorecards" value={tastings.length} />
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatPill label="Wing battles" value={battleCount} />
+            <StatPill label="Spot showdowns" value={spotBattleCount} />
             <StatPill label="Wings tried" value={tastedWingCount} />
+            <StatPill label="Spot reviews" value={reviews.length} />
           </div>
         </div>
       </header>
@@ -62,13 +63,40 @@ export default async function JudgePage({ params }: PageProps<"/judges/[id]">) {
       <div className="grid gap-10 lg:grid-cols-2">
         <section>
           <SectionTitle>Recent battles</SectionTitle>
-          {battles.length === 0 ? (
+          {battles.length + spotBattles.length === 0 ? (
             <EmptyState title="No battles judged yet" action={{ href: "/battle", label: "Judge one" }} />
           ) : (
             <div className="grid gap-3">
               {battles.map((b) => (
                 <BattleCard key={b.id} battle={b} now={now} />
               ))}
+              {spotBattles.map((b) => (
+                <SpotBattleCard key={b.id} battle={b} now={now} />
+              ))}
+            </div>
+          )}
+          {reviews.length > 0 && (
+            <div className="mt-10">
+              <SectionTitle>Spot reviews</SectionTitle>
+              <ul className="grid gap-2">
+                {reviews.map(({ review, spotName }) => (
+                  <li key={review.id}>
+                    <Link href={`/spots/${review.spotId}`} className="card flex items-center justify-between gap-3 px-4 py-3 transition hover:-translate-y-0.5">
+                      <div className="min-w-0">
+                        <div className="truncate font-bold">🏮 {spotName}</div>
+                        <div className="truncate text-xs text-ink-soft">
+                          {timeAgo(review.createdAt, now)}
+                          {review.notes && <> · “{review.notes}”</>}
+                        </div>
+                      </div>
+                      <div className="shrink-0 font-display text-xl font-semibold tabular-nums">
+                        {spotTotal(review)}
+                        <span className="text-xs text-ink-soft">/{MAX_SPOT_TOTAL}</span>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </section>

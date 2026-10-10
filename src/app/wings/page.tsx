@@ -3,7 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { EmptyState, PageHeader } from "@/components/bits";
 import { WingCard } from "@/components/cards";
-import { listWings } from "@/lib/queries";
+import { listWings, wingTypeOptions } from "@/lib/queries";
 
 export const metadata: Metadata = { title: "All wings" };
 
@@ -15,16 +15,36 @@ const SORTS = [
 
 export default async function WingsPage({ searchParams }: PageProps<"/wings">) {
   await connection();
-  const { sort: raw } = await searchParams;
+  const { sort: raw, type: rawType } = await searchParams;
   const sort = SORTS.find((s) => s.key === raw)?.key ?? "elo";
-  const wings = await listWings({ sort });
+  const types = await wingTypeOptions();
+  const type = types.find((t) => t.id === rawType);
+  const wings = await listWings({ sort, typeId: type?.id });
+  const href = (q: { sort?: string; type?: string }) => {
+    const p = new URLSearchParams();
+    if ((q.sort ?? sort) !== "elo") p.set("sort", q.sort ?? sort);
+    const t = "type" in q ? q.type : type?.id;
+    if (t) p.set("type", t);
+    const s = p.toString();
+    return s ? `/wings?${s}` : "/wings";
+  };
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
-      <PageHeader eyebrow="🍗 The roster" title="Every wing in the land" />
-      <div className="mb-6 flex gap-2">
+      <PageHeader eyebrow="🍗 The roster" title={type ? `Every ${type.name} wing` : "Every wing in the land"} />
+      <div className="mb-3 flex flex-wrap gap-2">
         {SORTS.map((s) => (
-          <Link key={s.key} href={`/wings?sort=${s.key}`} className={`btn text-sm ${sort === s.key ? "btn-primary" : "btn-secondary"}`}>
+          <Link key={s.key} href={href({ sort: s.key })} className={`btn text-sm ${sort === s.key ? "btn-primary" : "btn-secondary"}`}>
             {s.label}
+          </Link>
+        ))}
+      </div>
+      <div className="mb-6 flex flex-wrap gap-1.5">
+        <Link href={href({ type: undefined })} className={`chip ${type ? "" : "bg-sauce/15! border-sauce/50! text-ink!"}`}>
+          All types
+        </Link>
+        {types.map((t) => (
+          <Link key={t.id} href={href({ type: t.id })} className={`chip ${type?.id === t.id ? "bg-sauce/15! border-sauce/50! text-ink!" : ""}`}>
+            {t.emoji} {t.name}
           </Link>
         ))}
       </div>

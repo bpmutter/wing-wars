@@ -22,6 +22,7 @@ export function TournamentRunner({ wings }: { wings: WingOption[] }) {
   const [name, setName] = useState(() => NAMES[Math.floor(Math.random() * NAMES.length)]);
   const [selected, setSelected] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [entrants, setEntrants] = useState<string[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +36,10 @@ export function TournamentRunner({ wings }: { wings: WingOption[] }) {
   }
 
   function fillRandom() {
-    const pool = wings.map((w) => w.id).filter((id) => !selected.includes(id));
+    const pool = wings
+      .filter((w) => !typeFilter || w.typeId === typeFilter)
+      .map((w) => w.id)
+      .filter((id) => !selected.includes(id));
     const out = [...selected];
     while (out.length < size && pool.length) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
     setSelected(out);
@@ -67,7 +71,10 @@ export function TournamentRunner({ wings }: { wings: WingOption[] }) {
 
   /* ── setup ─────────────────────────────────────────────── */
   if (!entrants || !bracket) {
-    const visible = wings.filter((w) => `${w.name} ${w.spotName}`.toLowerCase().includes(filter.toLowerCase()));
+    const visible = wings.filter(
+      (w) => (!typeFilter || w.typeId === typeFilter) && `${w.name} ${w.spotName} ${w.typeName ?? ""}`.toLowerCase().includes(filter.toLowerCase()),
+    );
+    const types = [...new Map(wings.filter((w) => w.typeId).map((w) => [w.typeId!, w.typeName!])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
     return (
       <div className="grid gap-6">
         <section className="card grid gap-5 p-6">
@@ -106,7 +113,17 @@ export function TournamentRunner({ wings }: { wings: WingOption[] }) {
               <button type="button" className="btn btn-ghost text-sm" onClick={() => setSelected([])}>Clear</button>
             </div>
           </div>
-          <input className="field mb-4" placeholder="Search wings or spots…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input className="field" placeholder="Search wings, spots or types…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <select className="field" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by wing type">
+              <option value="">All wing types</option>
+              {types.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name} only
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="grid max-h-[28rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
             {visible.map((w) => {
               const on = selected.includes(w.id);
@@ -121,7 +138,10 @@ export function TournamentRunner({ wings }: { wings: WingOption[] }) {
                   <WingSpirit seed={w.id} heat={w.heat} style={w.style} size={44} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-bold">{w.name}</span>
-                    <span className="block truncate text-xs text-ink-soft">{w.spotName} · {w.elo}</span>
+                    <span className="block truncate text-xs text-ink-soft">
+                      {w.spotName}
+                      {w.typeName && <> · {w.typeName}</>} · {w.elo}
+                    </span>
                   </span>
                   <span aria-hidden>{on ? "✅" : "➕"}</span>
                 </button>

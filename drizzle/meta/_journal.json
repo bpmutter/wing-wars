@@ -8,6 +8,13 @@
       "when": 1791646652220,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791647178936,
+      "tag": "0001_wing_types_and_spot_judging",
+      "breakpoints": true
     }
   ]
 }

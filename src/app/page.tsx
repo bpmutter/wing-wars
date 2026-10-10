@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { BattleCard, WingCard } from "@/components/cards";
+import { BattleCard, SpotBattleCard, SpotCard, WingCard } from "@/components/cards";
 import { EmptyState, HeatPips, RankBadge, SectionTitle, StatPill } from "@/components/bits";
 import { Radar } from "@/components/radar";
 import { Scenery } from "@/components/scenery";
 import { WingSpirit } from "@/components/wing-spirit";
-import { listWings, recentBattles, recentTournaments, worldStats, getWing } from "@/lib/queries";
+import { getWing, listSpots, listWings, recentBattles, recentSpotBattles, recentTournaments, worldStats } from "@/lib/queries";
 
 export default function Home() {
   return (
@@ -47,8 +47,8 @@ export default function Home() {
           <SectionTitle>How the wars are waged</SectionTitle>
           <div className="grid gap-4 md:grid-cols-3">
             {[
-              { n: "1", t: "Gather your contenders", d: "Add the spots you love (or love to hate) and the wings they serve. Every wing gets its own little spirit.", e: "🏮" },
-              { n: "2", t: "Battle head-to-head", d: "Eat two wings, score each on the five elements, and declare a victor. Ratings move by Elo — upsets earn more.", e: "⚔️" },
+              { n: "1", t: "Gather your contenders", d: "Add the spots you love (or love to hate) and the wings they serve, sorted into types like Buffalo or Lemon Pepper.", e: "🏮" },
+              { n: "2", t: "Battle head-to-head", d: "Wing vs wing on the five elements, or spot vs spot on the whole experience. Ratings move by Elo — upsets earn more.", e: "⚔️" },
               { n: "3", t: "Crown a champion", d: "Climb from Lost Crumb to Great Sauce Spirit, or run an 8-wing tournament bracket with your friends.", e: "👑" },
             ].map((s) => (
               <div key={s.n} className="card p-6">
@@ -67,11 +67,13 @@ export default function Home() {
 async function HomeData() {
   await connection();
   const now = new Date();
-  const [top, battles, stats, tourneys] = await Promise.all([
+  const [top, battles, stats, tourneys, topSpots, showdowns] = await Promise.all([
     listWings({ limit: 6 }),
     recentBattles({ limit: 6 }),
     worldStats(),
     recentTournaments(3),
+    listSpots({ limit: 3 }),
+    recentSpotBattles({ limit: 3 }),
   ]);
 
   if (top.length === 0) {
@@ -136,6 +138,16 @@ async function HomeData() {
               ))}
             </div>
           )}
+          {showdowns.length > 0 && (
+            <div className="mt-8">
+              <SectionTitle action={{ href: "/battles?kind=spots", label: "All showdowns" }}>Spot showdowns</SectionTitle>
+              <div className="grid gap-3">
+                {showdowns.map((b) => (
+                  <SpotBattleCard key={b.id} battle={b} now={now} />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
         <section>
           <SectionTitle action={{ href: "/leaderboard", label: "Full leaderboard" }}>Top of the hill</SectionTitle>
@@ -144,6 +156,16 @@ async function HomeData() {
               <WingCard key={w.id} wing={w} place={i + 1} />
             ))}
           </div>
+          {topSpots.length > 0 && (
+            <div className="mt-8">
+              <SectionTitle action={{ href: "/leaderboard?board=spots", label: "Spot rankings" }}>Most beloved spots</SectionTitle>
+              <div className="grid gap-3">
+                {topSpots.map((s, i) => (
+                  <SpotCard key={s.id} spot={s} place={i + 1} />
+                ))}
+              </div>
+            </div>
+          )}
           {tourneys.length > 0 && (
             <div className="mt-8">
               <SectionTitle action={{ href: "/tournament", label: "Run one" }}>Recent tournaments</SectionTitle>

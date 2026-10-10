@@ -27,3 +27,10 @@ describe("ranks", () => {
     expect(rankFor(1500).title).toBe("Great Sauce Spirit");
   });
 });
+
+describe("spot ranks", () => {
+  it("has its own ladder", () => {
+    expect(rankFor(1200, "spot").title).toBe("Village Tavern");
+    expect(rankFor(1500, "spot").title).toBe("Legendary Bathhouse");
+  });
+});

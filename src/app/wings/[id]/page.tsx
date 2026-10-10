@@ -3,15 +3,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { EmptyState, HeatPips, LeafShower, RankBadge, SectionTitle, StatPill } from "@/components/bits";
+import { EmptyState, HeatPips, LeafShower, RankBadge, SectionTitle, StatPill, TypeChip } from "@/components/bits";
 import { BattleCard } from "@/components/cards";
 import { Radar } from "@/components/radar";
 import { WingSpirit } from "@/components/wing-spirit";
 import { timeAgo, winRate } from "@/lib/format";
-import { getWing, recentBattles } from "@/lib/queries";
-import { RANKS, rankFor } from "@/lib/ranks";
+import { getWing, recentBattles, wingTypeOptions } from "@/lib/queries";
+import { nextRank as nextRankFor, rankFor } from "@/lib/ranks";
 import { ELEMENTS, MAX_TOTAL, total } from "@/lib/scoring";
 import { getCurrentUser } from "@/lib/session";
+import { AssignTypeForm } from "./assign-type-form";
 import { TastingForm } from "./tasting-form";
 
 export const metadata: Metadata = { title: "Wing" };
@@ -22,11 +23,11 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
   const sp = await searchParams;
   const data = await getWing(id);
   if (!data) notFound();
-  const { wing, spot, tastings, averages, place } = data;
+  const { wing, spot, type, tastings, averages, place, typePlace } = data;
   const battles = await recentBattles({ wingId: id, limit: 10 });
   const now = new Date();
   const rank = rankFor(wing.elo);
-  const nextRank = RANKS[RANKS.indexOf(rank) + 1];
+  const nextRank = nextRankFor(wing.elo);
   const rate = winRate(wing.wins, wing.losses);
 
   return (
@@ -38,7 +39,7 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
         </div>
         <div>
           <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">
-            #{place} in the land · {wing.style}
+            #{place} in the land{type && typePlace && <> · #{typePlace} {type.name}</>} · {wing.style}
           </p>
           <h1 className="mt-1 text-4xl font-semibold sm:text-5xl">{wing.name}</h1>
           <p className="mt-1 text-lg text-ink-soft">
@@ -47,8 +48,20 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <RankBadge elo={wing.elo} />
+            {type ? (
+              <Link href={`/types/${type.id}`}>
+                <TypeChip type={{ typeId: type.id, typeName: type.name, typeEmoji: type.emoji }} />
+              </Link>
+            ) : (
+              <TypeChip type={{ typeId: null, typeName: null }} />
+            )}
             <HeatPips heat={wing.heat} />
           </div>
+          {!type && (
+            <Suspense>
+              <AssignTypeGate wingId={wing.id} />
+            </Suspense>
+          )}
           {wing.description && <p className="mt-4 max-w-xl">{wing.description}</p>}
           <p className="mt-3 text-sm italic text-ink-soft">
             “{rank.blurb}”{nextRank && <> — {nextRank.min - wing.elo} points from {nextRank.title}.</>}
@@ -149,4 +162,10 @@ async function TastingGate({ wingId, wingName }: { wingId: string; wingName: str
     );
   }
   return <TastingForm wingId={wingId} wingName={wingName} />;
+}
+
+async function AssignTypeGate({ wingId }: { wingId: string }) {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  return <AssignTypeForm wingId={wingId} types={await wingTypeOptions()} />;
 }

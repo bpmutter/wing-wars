@@ -6,11 +6,15 @@ import { Field, FormError, SubmitButton } from "@/components/form-bits";
 import { WingSpirit } from "@/components/wing-spirit";
 import { HEAT_LABELS } from "@/lib/scoring";
 
-export function WingForm({ spotId }: { spotId: string }) {
+/** Must match NEW_TYPE in actions.ts. */
+const NEW_TYPE = "__new";
+
+export function WingForm({ spotId, types }: { spotId: string; types: { id: string; name: string; emoji: string }[] }) {
   const [state, action] = useActionState<FormState, FormData>(createWing, null);
   const [heat, setHeat] = useState(2);
   const [style, setStyle] = useState<"bone-in" | "boneless">("bone-in");
   const [name, setName] = useState("");
+  const [typeId, setTypeId] = useState("");
   const fe = state?.fieldErrors ?? {};
   return (
     <form action={action} className="grid gap-5">
@@ -21,6 +25,22 @@ export function WingForm({ spotId }: { spotId: string }) {
       <Field label="Flavor / name" error={fe.name}>
         <input name="name" required maxLength={80} className="field" placeholder="Honey Garlic" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
+      <Field label="Wing type" error={fe.wingTypeId} hint="So it can be compared with the same type at other spots.">
+        <select name="wingTypeId" required className="field" value={typeId} onChange={(e) => setTypeId(e.target.value)}>
+          <option value="">— Choose a type —</option>
+          {types.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.emoji} {t.name}
+            </option>
+          ))}
+          <option value={NEW_TYPE}>➕ Something new…</option>
+        </select>
+      </Field>
+      {typeId === NEW_TYPE && (
+        <Field label="New wing type" error={fe.newType}>
+          <input name="newType" maxLength={40} className="field" placeholder="Maple Bourbon" autoFocus />
+        </Field>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Style" error={fe.style}>
           <select name="style" className="field" value={style} onChange={(e) => setStyle(e.target.value as typeof style)}>

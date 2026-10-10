@@ -1,14 +1,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { rankFor } from "@/lib/ranks";
+import { rankFor, type RankKind } from "@/lib/ranks";
 import { HEAT_LABELS } from "@/lib/scoring";
 import { signed } from "@/lib/format";
 
-export function RankBadge({ elo, className = "" }: { elo: number; className?: string }) {
-  const rank = rankFor(elo);
+export function RankBadge({ elo, kind = "wing", className = "" }: { elo: number; kind?: RankKind; className?: string }) {
+  const rank = rankFor(elo, kind);
   return (
     <span className={`chip bg-honey/25! border-honey/60! text-ink! ${className}`} title={rank.blurb}>
-      ✦ {rank.title}
+      {kind === "spot" ? "🏮" : "✦"} {rank.title}
     </span>
   );
 }
@@ -98,6 +98,45 @@ export function LeafShower({ count = 14 }: { count?: number }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+export function TypeChip({ type }: { type: { typeId: string | null; typeName: string | null; typeEmoji?: string | null } }) {
+  if (!type.typeId) return <span className="chip">Uncategorized</span>;
+  return (
+    <span className="chip bg-meadow/15! border-meadow/40! text-forest!">
+      <span aria-hidden>{type.typeEmoji ?? "🍗"}</span> {type.typeName}
+    </span>
+  );
+}
+
+/** One row of a side-by-side score comparison. */
+export function TapeRow({ label, a, b, max, bold }: { label: string; a: number; b: number; max: number; bold?: boolean }) {
+  return (
+    <div className={`grid grid-cols-[2.5rem_1fr_6.5rem_1fr_2.5rem] items-center gap-2 ${bold ? "border-t border-line pt-4" : ""}`}>
+      <span className={`text-right tabular-nums ${a > b ? "font-bold text-sauce" : ""} ${bold ? "font-display text-xl" : ""}`}>{a}</span>
+      <div className="flex h-3 justify-end overflow-hidden rounded-full bg-paper-2">
+        <div className="rounded-full bg-sauce" style={{ width: `${(a / max) * 100}%` }} />
+      </div>
+      <span className={`text-center text-sm ${bold ? "font-bold uppercase tracking-wider" : "font-bold"}`}>{label}</span>
+      <div className="flex h-3 overflow-hidden rounded-full bg-paper-2">
+        <div className="rounded-full bg-moss" style={{ width: `${(b / max) * 100}%` }} />
+      </div>
+      <span className={`tabular-nums ${b > a ? "font-bold text-moss" : ""} ${bold ? "font-display text-xl" : ""}`}>{b}</span>
+    </div>
+  );
+}
+
+/** Pill-style tab links. */
+export function Tabs({ tabs, active }: { tabs: { key: string; label: string; href: string }[]; active: string }) {
+  return (
+    <div className="mb-6 flex flex-wrap gap-2" role="tablist">
+      {tabs.map((t) => (
+        <Link key={t.key} href={t.href} role="tab" aria-selected={t.key === active} className={`btn text-sm ${t.key === active ? "btn-primary" : "btn-secondary"}`}>
+          {t.label}
+        </Link>
+      ))}
     </div>
   );
 }

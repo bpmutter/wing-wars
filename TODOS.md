@@ -83,11 +83,17 @@ These are ideas I deliberately left out to keep v1 tight.
 
 - **Email verification & password reset.** Both are off. Better Auth supports them, but they need an email
   provider (e.g. Resend's free tier). Until then, a forgotten password means a new account.
+- **Uncategorized wings.** The `0001` migration adds wing types, and wings created before it get no type. Any
+  signed-in user can assign one from the wing's page. This only matters for a local DB created before the
+  change (nothing has been deployed yet).
+- **Spot tournaments.** Tournaments are wing-only for now. The bracket logic is generic, so a spot bracket would
+  be a small addition.
 - **Moderation / editing.** Spots and wings can't be edited or deleted from the UI yet, so typos are forever.
   You'd want an "owner can edit" rule and probably an admin role.
-- **Duplicate spots.** Nothing stops two people adding "Joe's Wings" twice. Fuzzy-match warnings on the add form
-  would help.
-- **Rate limiting.** Anyone signed in can spam battles to pump a wing's Elo. Ideas: one battle per pair per judge
+- **Duplicate spots and types.** Nothing stops two people adding "Joe's Wings" twice. Wing types are matched
+  case-insensitively, but near-duplicates like "Buffalo" and "Buffalo Classic" can still both exist.
+  Fuzzy-match warnings on the add forms would help.
+- **Rate limiting.** Anyone signed in can spam battles to pump a wing's (or spot's) Elo. Ideas: one battle per pair per judge
   per day, or weight each judge's influence.
 - **Photos.** Real wing photos would be fun (Vercel Blob has a free tier). The generated wing spirits fill that
   role for now.

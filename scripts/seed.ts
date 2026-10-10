@@ -6,11 +6,12 @@
 import { hashPassword } from "better-auth/crypto";
 import { count } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { account, spots, tastings, tournaments, user, wings } from "@/db/schema";
-import { recordBattle } from "@/lib/battle-engine";
+import { account, spotReviews, spots, tastings, tournaments, user, wingTypes, wings } from "@/db/schema";
+import { recordBattle, recordSpotBattle } from "@/lib/battle-engine";
 import { buildBracket, seedEntrants } from "@/lib/bracket";
 import { seeded } from "@/lib/hash";
-import type { Scores } from "@/lib/scoring";
+import type { Scores, SpotScores } from "@/lib/scoring";
+import { ensureWingTypes } from "@/lib/wing-types";
 
 export const DEMO_EMAIL = "demo@wingwars.local";
 export const DEMO_PASSWORD = "wingwars";
@@ -22,74 +23,85 @@ const JUDGES = [
   { id: "judge_cap", name: "Captain Drumstick", email: "captain@wingwars.local" },
 ];
 
-type SeedWing = { name: string; style: "bone-in" | "boneless"; heat: number; description: string; quality: number };
+type SeedWing = { name: string; type: string; style: "bone-in" | "boneless"; heat: number; description: string; quality: number };
+/** Hidden "true" quality of the restaurant experience, used to generate believable reviews. */
+type SeedVibe = { sides: number; vibe: number; service: number; value: number };
 
-const SPOTS: { name: string; neighborhood: string; description: string; wings: SeedWing[] }[] = [
+const SPOTS: { name: string; neighborhood: string; description: string; vibe: SeedVibe; wings: SeedWing[] }[] = [
   {
     name: "The Copper Kettle Tavern",
+    vibe: { sides: 8, vibe: 9, service: 8, value: 7 },
     neighborhood: "Riverside",
     description: "Low beams, a crackling fireplace and a bartender who remembers your order. The wings come out in little copper pots.",
     wings: [
-      { name: "Honey Garlic", style: "bone-in", heat: 0, description: "Sticky, golden, roasted garlic cloves tossed right in.", quality: 7.5 },
-      { name: "Classic Buffalo (Medium)", style: "bone-in", heat: 2, description: "The benchmark. Butter, vinegar, cayenne, no nonsense.", quality: 7 },
-      { name: "Smoked Dry Rub", style: "bone-in", heat: 1, description: "Hickory-smoked then flash-fried. Paprika, brown sugar, sea salt.", quality: 8.2 },
+      { name: "Honey Garlic", type: "Honey Garlic", style: "bone-in", heat: 0, description: "Sticky, golden, roasted garlic cloves tossed right in.", quality: 7.5 },
+      { name: "Classic Buffalo (Medium)", type: "Buffalo", style: "bone-in", heat: 2, description: "The benchmark. Butter, vinegar, cayenne, no nonsense.", quality: 7 },
+      { name: "Fireside Garlic Parm", type: "Garlic Parmesan", style: "bone-in", heat: 0, description: "Roasted garlic butter and aged parmesan, finished by the fire.", quality: 7.4 },
+      { name: "Smoked Dry Rub", type: "Dry Rub", style: "bone-in", heat: 1, description: "Hickory-smoked then flash-fried. Paprika, brown sugar, sea salt.", quality: 8.2 },
     ],
   },
   {
     name: "Windmill Hill Wing Shack",
+    vibe: { sides: 6, vibe: 6, service: 6, value: 9 },
     neighborhood: "Old Town",
     description: "A walk-up window at the foot of the old windmill. Cash only. Line out the door on Fridays.",
     wings: [
-      { name: "Hilltop Hot", style: "bone-in", heat: 4, description: "Their house buffalo, cranked way up. Sweat guaranteed.", quality: 7.8 },
-      { name: "Lemon Pepper Wet", style: "bone-in", heat: 0, description: "Bright, buttery, cracked-pepper perfection.", quality: 8.6 },
-      { name: "Mango Habanero", style: "boneless", heat: 4, description: "Sweet up front, fire in the back.", quality: 6.4 },
+      { name: "Hilltop Hot", type: "Buffalo", style: "bone-in", heat: 4, description: "Their house buffalo, cranked way up. Sweat guaranteed.", quality: 7.8 },
+      { name: "Lemon Pepper Wet", type: "Lemon Pepper", style: "bone-in", heat: 0, description: "Bright, buttery, cracked-pepper perfection.", quality: 8.6 },
+      { name: "Mango Habanero", type: "Fruity Heat", style: "boneless", heat: 4, description: "Sweet up front, fire in the back.", quality: 6.4 },
     ],
   },
   {
     name: "The Floating Lantern",
+    vibe: { sides: 7, vibe: 9.5, service: 7, value: 6 },
     neighborhood: "Harbor District",
     description: "A converted ferry boat strung with paper lanterns. Wings and soju while the boats bob by.",
     wings: [
-      { name: "Gochujang Glaze", style: "bone-in", heat: 3, description: "Double-fried, shatteringly crisp, lacquered in sweet chili paste.", quality: 9.1 },
-      { name: "Soy Ginger", style: "bone-in", heat: 1, description: "Savory and clean with scallion confetti.", quality: 7.2 },
-      { name: "Salt & Pepper Bites", style: "boneless", heat: 1, description: "Wok-tossed with garlic, chili and green onion.", quality: 6.8 },
+      { name: "Gochujang Glaze", type: "Asian Glaze", style: "bone-in", heat: 3, description: "Double-fried, shatteringly crisp, lacquered in sweet chili paste.", quality: 9.1 },
+      { name: "Soy Ginger", type: "Asian Glaze", style: "bone-in", heat: 1, description: "Savory and clean with scallion confetti.", quality: 7.2 },
+      { name: "Salt & Pepper Bites", type: "Salt & Pepper", style: "boneless", heat: 1, description: "Wok-tossed with garlic, chili and green onion.", quality: 6.8 },
     ],
   },
   {
     name: "Sootfire Smokehouse",
+    vibe: { sides: 9, vibe: 7, service: 7, value: 7 },
     neighborhood: "Mill Street",
     description: "A brick smokehouse with a coal pit that hasn't gone out in eleven years.",
     wings: [
-      { name: "Applewood Smoked", style: "bone-in", heat: 1, description: "Four hours over applewood. Crisped on the grill to order.", quality: 8.4 },
-      { name: "Carolina Gold", style: "bone-in", heat: 1, description: "Tangy mustard BBQ sauce, a little sweet, a lot of tang.", quality: 6.9 },
-      { name: "The Fire Demon", style: "bone-in", heat: 5, description: "Ghost pepper and scorpion. Waiver required. Not joking.", quality: 5.8 },
+      { name: "Applewood Smoked", type: "Dry Rub", style: "bone-in", heat: 1, description: "Four hours over applewood. Crisped on the grill to order.", quality: 8.4 },
+      { name: "Carolina Gold", type: "BBQ", style: "bone-in", heat: 1, description: "Tangy mustard BBQ sauce, a little sweet, a lot of tang.", quality: 6.9 },
+      { name: "The Fire Demon", type: "Extreme Heat", style: "bone-in", heat: 5, description: "Ghost pepper and scorpion. Waiver required. Not joking.", quality: 5.8 },
     ],
   },
   {
     name: "Grandma Tanuki's Kitchen",
+    vibe: { sides: 7, vibe: 8, service: 9.5, value: 8 },
     neighborhood: "Bamboo Lane",
     description: "Tiny family kitchen, six seats, one very opinionated grandmother.",
     wings: [
-      { name: "Sweet Chili Crunch", style: "bone-in", heat: 2, description: "Crispy potato-starch coating, sweet chili drizzle, toasted sesame.", quality: 8.0 },
-      { name: "Garlic Parmesan", style: "boneless", heat: 0, description: "Comfort food. Mountains of parmesan.", quality: 6.2 },
+      { name: "Sweet Chili Crunch", type: "Asian Glaze", style: "bone-in", heat: 2, description: "Crispy potato-starch coating, sweet chili drizzle, toasted sesame.", quality: 8.0 },
+      { name: "Garlic Parmesan", type: "Garlic Parmesan", style: "boneless", heat: 0, description: "Comfort food. Mountains of parmesan.", quality: 6.2 },
     ],
   },
   {
     name: "The Bathhouse Bar & Grill",
+    vibe: { sides: 6, vibe: 8.5, service: 5.5, value: 6 },
     neighborhood: "Hot Springs",
     description: "Built into an old bathhouse. Steam rises from the courtyard pools; the wings arrive on wooden buckets.",
     wings: [
-      { name: "Steam Room Buffalo", style: "bone-in", heat: 3, description: "Steamed then fried, so they're impossibly juicy.", quality: 7.6 },
-      { name: "Sriracha Honey", style: "bone-in", heat: 2, description: "Sweet heat with a crackly honey shell.", quality: 7.3 },
+      { name: "Steam Room Buffalo", type: "Buffalo", style: "bone-in", heat: 3, description: "Steamed then fried, so they're impossibly juicy.", quality: 7.6 },
+      { name: "Sriracha Honey", type: "Hot Honey", style: "bone-in", heat: 2, description: "Sweet heat with a crackly honey shell.", quality: 7.3 },
     ],
   },
   {
     name: "Cloudtop Diner",
+    vibe: { sides: 7.5, vibe: 7, service: 8, value: 8.5 },
     neighborhood: "Airfield Road",
     description: "A chrome diner next to the old airstrip. Pilots swear by the wings.",
     wings: [
-      { name: "Sky Pirate BBQ", style: "bone-in", heat: 1, description: "Smoky molasses BBQ, charred at the edges.", quality: 6.6 },
-      { name: "Volcano Island Jerk", style: "bone-in", heat: 4, description: "Allspice, scotch bonnet and lime. Grilled over charcoal.", quality: 8.1 },
+      { name: "Sky Pirate BBQ", type: "BBQ", style: "bone-in", heat: 1, description: "Smoky molasses BBQ, charred at the edges.", quality: 6.6 },
+      { name: "Lemon Pepper Dry", type: "Lemon Pepper", style: "bone-in", heat: 0, description: "Dry-tossed, extra pepper, a squeeze of lemon at the table.", quality: 7.0 },
+      { name: "Volcano Island Jerk", type: "Jerk", style: "bone-in", heat: 4, description: "Allspice, scotch bonnet and lime. Grilled over charcoal.", quality: 8.1 },
     ],
   },
 ];
@@ -120,6 +132,9 @@ export async function seed(db: Db, { quiet = false } = {}) {
     return false;
   }
 
+  await ensureWingTypes(db);
+  const typeIds = new Map((await db.select({ id: wingTypes.id, name: wingTypes.name }).from(wingTypes)).map((t) => [t.name, t.id]));
+
   const rand = seeded("wing-wars-seed");
   const now = Date.now();
   const DAY = 86_400_000;
@@ -142,15 +157,18 @@ export async function seed(db: Db, { quiet = false } = {}) {
 
   // Spots & wings
   const roster: { id: string; quality: number; profile: Scores }[] = [];
+  const spotRoster: { id: string; profile: SpotScores }[] = [];
   for (const s of SPOTS) {
     const [spot] = await db
       .insert(spots)
       .values({ name: s.name, neighborhood: s.neighborhood, description: s.description, createdById: JUDGES[1 + Math.floor(rand() * 3)].id, createdAt: new Date(now - 35 * DAY) })
       .returning({ id: spots.id });
+    const wingGame = s.wings.reduce((sum, w) => sum + w.quality, 0) / s.wings.length;
+    spotRoster.push({ id: spot.id, profile: { wingGame, ...s.vibe } });
     for (const w of s.wings) {
       const [wing] = await db
         .insert(wings)
-        .values({ spotId: spot.id, name: w.name, style: w.style, heat: w.heat, description: w.description, createdById: JUDGES[1].id, createdAt: new Date(now - 34 * DAY) })
+        .values({ spotId: spot.id, name: w.name, wingTypeId: typeIds.get(w.type), style: w.style, heat: w.heat, description: w.description, createdById: JUDGES[1].id, createdAt: new Date(now - 34 * DAY) })
         .returning({ id: wings.id });
       // Each wing has a hidden "true" flavor profile around its quality.
       const q = w.quality;
@@ -217,6 +235,60 @@ export async function seed(db: Db, { quiet = false } = {}) {
     });
   }
 
+  // Spot showdowns and reviews.
+  const spotCard = (s: (typeof spotRoster)[number]): SpotScores => ({
+    wingGame: clamp(s.profile.wingGame + (rand() - 0.5) * 2.4),
+    sides: clamp(s.profile.sides + (rand() - 0.5) * 2.4),
+    vibe: clamp(s.profile.vibe + (rand() - 0.5) * 2.4),
+    service: clamp(s.profile.service + (rand() - 0.5) * 2.4),
+    value: clamp(s.profile.value + (rand() - 0.5) * 2.4),
+  });
+  const spotSum = (s: SpotScores) => s.wingGame + s.sides + s.vibe + s.service + s.value;
+  const SPOT_NOTES = [
+    "The ranch alone is worth the trip.",
+    "Lovely spot, but we waited forty minutes for a refill.",
+    "Felt like eating inside a storybook.",
+    "Wings were great, the fries were a tragedy.",
+    "Friendliest staff in the land. They remembered my name.",
+    "A little pricey, but the lanterns, though.",
+    "",
+    "",
+  ];
+  const SHOWDOWNS = 24;
+  for (let i = 0; i < SHOWDOWNS; i++) {
+    const ai = Math.floor(rand() * spotRoster.length);
+    let bi = Math.floor(rand() * (spotRoster.length - 1));
+    if (bi >= ai) bi++;
+    const a = spotRoster[ai];
+    const b = spotRoster[bi];
+    const scoresA = spotCard(a);
+    const scoresB = spotCard(b);
+    const aWins = spotSum(scoresA) === spotSum(scoresB) ? rand() < 0.5 : spotSum(scoresA) > spotSum(scoresB);
+    const when = new Date(now - (28 - (i / SHOWDOWNS) * 28) * DAY - rand() * 6 * 3_600_000);
+    await db.transaction((tx) =>
+      recordSpotBattle(tx, {
+        userId: JUDGES[Math.floor(rand() * JUDGES.length)].id,
+        spotAId: a.id,
+        spotBId: b.id,
+        winnerId: aWins ? a.id : b.id,
+        scoresA,
+        scoresB,
+        verdict: SPOT_NOTES[Math.floor(rand() * SPOT_NOTES.length)],
+        createdAt: when,
+      }),
+    );
+  }
+  for (let i = 0; i < 14; i++) {
+    const s = spotRoster[Math.floor(rand() * spotRoster.length)];
+    await db.insert(spotReviews).values({
+      spotId: s.id,
+      userId: JUDGES[Math.floor(rand() * JUDGES.length)].id,
+      ...spotCard(s),
+      notes: SPOT_NOTES[Math.floor(rand() * (SPOT_NOTES.length - 2))],
+      createdAt: new Date(now - rand() * 30 * DAY),
+    });
+  }
+
   // One festival tournament, a few days ago.
   const field = [...roster].sort(() => rand() - 0.5).slice(0, 8);
   const entrants = seedEntrants(field.sort((x, y) => y.quality - x.quality).map((w) => w.id));
@@ -242,6 +314,6 @@ export async function seed(db: Db, { quiet = false } = {}) {
     }
   });
 
-  if (!quiet) console.log(`🌱 Seeded ${SPOTS.length} spots, ${roster.length} wings, ${BATTLES + 7} battles. Demo login: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  if (!quiet) console.log(`🌱 Seeded ${SPOTS.length} spots, ${roster.length} wings, ${BATTLES + 7} wing battles, ${SHOWDOWNS} spot showdowns. Demo login: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
   return true;
 }

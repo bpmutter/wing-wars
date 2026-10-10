@@ -14,9 +14,17 @@ database.
 
 ## The concept
 
-### 🏮 Spots & wings
-A **spot** is any restaurant, bar or shack that serves wings. Each spot has **wings**: a specific flavor/style
-like *Honey Garlic (bone-in)*, with an advertised heat level from 0 (*No heat*) to 5 (*Volcanic*).
+### 🏮 Spots, wings & wing types
+The data model has three layers:
+
+- A **spot** is any restaurant, bar or shack that serves wings.
+- A **wing type** is a canonical kind of wing (*Buffalo*, *Lemon Pepper*, *Garlic Parmesan*, *Asian Glaze*,
+  *Nashville Hot*… 13 to start, and people can add more).
+- A **wing** is one specific offering: a spot's take on a type, e.g. *Hilltop Hot* (a Buffalo wing at Windmill
+  Hill Wing Shack). It has a style (bone-in/boneless) and an advertised heat level from 0 (*No heat*) to 5
+  (*Volcanic*).
+
+Wings and spots are **judged separately**, and each has its own rating, ranks and leaderboard.
 
 Every wing gets its own **wing spirit**: a little procedurally generated forest creature (drumstick or nugget,
 depending on style). Its color comes from the heat level, and its face, crispy bits and sauce drips come from
@@ -37,13 +45,36 @@ The winner defaults to the higher total, but you can overrule your own scorecard
 verdict"). Every battle gets a **battle report** with a tale-of-the-tape comparison, an overlaid flavor-radar
 chart, rating changes, the all-time head-to-head record, and a little shower of falling leaves.
 
+### 🏮 Judging spots
+Restaurants get judged on the whole visit, not just one wing. A **spot showdown** pits two spots head to head,
+and you can leave a solo **review** on any spot's page. Spots are scored on the **five virtues** (1–10):
+
+| | Virtue | What it means |
+|---|---|---|
+| 🍗 | **Wing Game** | How good is the wing menu overall? |
+| 🥣 | **Sides & Dips** | Ranch, blue cheese, fries, celery |
+| 🏮 | **Vibe** | Cozy? Lively? Somewhere you'd linger? |
+| 🙇 | **Service** | Friendly, quick, napkins on hand |
+| 🪙 | **Value** | Worth the coin? |
+
+Every spot is drawn as its own paper-lantern spirit. A spot can serve the best wing in town and still lose a
+showdown if the service is grim.
+
+### 🍃 Wing types
+Each type has its own leaderboard ("the best Buffalo in the land"). You can run **same-type showdowns**: the
+battle form and the tournament picker can both filter by type. Types are also ranked **against each other** by
+their record in battles between *different* types, which settles the Buffalo vs. Lemon Pepper question. Same-type
+battles crown the best wing within a type but don't count toward the cross-type standings.
+
 ### 📈 Ratings & ranks
-Wings carry a shared **Elo rating**: they start at 1200 with K = 32. Beating a stronger wing earns a lot,
-and losing to an underdog costs a lot. Ratings map to ranks:
+Wings and spots each carry a shared **Elo rating**: they start at 1200 with K = 32. Beating a stronger rival
+earns a lot, and losing to an underdog costs a lot. Ratings map to ranks:
 
-`Lost Crumb → Dust Sprite → Meadow Wanderer → Hilltop Hero → Sky Captain → Forest Guardian → Great Sauce Spirit`
+- Wings: `Lost Crumb → Dust Sprite → Meadow Wanderer → Hilltop Hero → Sky Captain → Forest Guardian → Great Sauce Spirit`
+- Spots: `Abandoned Shack → Roadside Stall → Village Tavern → Hilltop Inn → Famous Teahouse → Grand Festival Hall → Legendary Bathhouse`
 
-The **leaderboard** puts the top three on a podium of rolling hills, and also lists the most devoted judges.
+The **leaderboard** has three tabs: wings and spots (top three on a podium of rolling hills) and wing types
+(a cross-type standings table). It also lists the most devoted judges.
 
 ### 🏯 Tournaments
 For wing nights. Pick 4, 8 or 16 wings, seed them by rating (1v8, 4v5, …) or draw at random, then tap the
@@ -69,8 +100,8 @@ npm run dev
 Then open http://localhost:3000.
 
 That's it. `npm run dev` runs a `predev` step that creates `local.db` (SQLite), applies the migrations and,
-if the database is empty, seeds a small demo world: 7 spots, 18 wings, 4 judges, about a month of battles and
-one tournament.
+if the database is empty, seeds a small demo world: 7 spots, 20 wings across 13 wing types, 4 judges, about a
+month of wing battles and spot showdowns, and one tournament.
 
 **Demo login:** `demo@wingwars.local` / `wingwars`. You can also create your own account on the sign-in page
 (email + password, stored locally).
@@ -82,8 +113,8 @@ one tournament.
 | `npm run dev` | Prepare the local DB (migrate + seed if empty), then start Next.js |
 | `npm run build` / `npm start` | Production build / server |
 | `npm run vercel-build` | Applies migrations to the configured DB, then builds (Vercel runs this automatically) |
-| `npm test` | Unit tests (Vitest): Elo, ranks and bracket logic |
-| `npx playwright test` | End-to-end smoke test: sign up → battle → add spot/wing → tasting → tournament |
+| `npm test` | Unit tests (Vitest): Elo, ranks, scoring and bracket logic |
+| `npx playwright test` | End-to-end smoke test: sign up → wing battle → add spot + wing (with a new wing type) → tasting → spot review → spot showdown → tournament |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run db:generate` | Generate a new migration after editing `src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to whatever DB the env points at |
@@ -112,8 +143,10 @@ everything.
 src/
   app/                 routes (App Router)
     page.tsx           home: hero, reigning champion, recent battles, top wings
-    battle/            the battle scorecard form
-    battles/[id]/      battle report
+    battle/            the battle scorecard form (wing vs wing, or spot vs spot)
+    battles/[id]/      wing battle report
+    spot-battles/[id]/ spot showdown report
+    types/             wing types: cross-type standings + per-type leaderboards
     leaderboard/       podium + rankings
     spots/, wings/     browse, detail pages, add forms
     tournament/        bracket runner (client) ▸ tournaments/[id] results
@@ -121,10 +154,11 @@ src/
     sign-in/           email+password (and optional GitHub) auth
     actions.ts         all server actions (validated with zod)
     api/auth/[...all]  Better Auth handler
-  components/          wing-spirit, scenery, radar chart, bracket view, cards…
+  components/          wing-spirit, spot-spirit, scenery, radar chart, bracket view, cards…
   db/                  Drizzle schema + client (local file or Turso)
   lib/                 auth, session, queries, Elo, ranks, scoring, bracket logic
-scripts/               setup-local (migrate+seed), migrate, seed, reset
+scripts/               setup-local (migrate + seed), migrate, seed, reset
+                       (both migrate paths also insert any missing canonical wing types)
 drizzle/               SQL migrations
 tests/                 unit (vitest) + e2e (playwright)
 ```

@@ -1,8 +1,8 @@
 import "server-only";
 import { aliasedTable, and, asc, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { battles, spots, tastings, tournaments, user, wings } from "@/db/schema";
-import { average, type Scores } from "./scoring";
+import { battles, spotBattles, spotReviews, spots, tastings, tournaments, user, wingTypes, wings } from "@/db/schema";
+import { average, spotAverage, type Scores, type SpotScores } from "./scoring";
 
 /* ── helpers ─────────────────────────────────────────────────── */
 
@@ -19,6 +19,9 @@ const tastingStats = db
 const wingListSelect = {
   id: wings.id,
   name: wings.name,
+  typeId: wingTypes.id,
+  typeName: wingTypes.name,
+  typeEmoji: wingTypes.emoji,
   style: wings.style,
   heat: wings.heat,
   elo: wings.elo,
@@ -33,9 +36,14 @@ const wingListSelect = {
 
 export type WingListItem = Awaited<ReturnType<typeof listWings>>[number];
 
+const wingA = aliasedTable(wings, "wing_a");
+const wingB = aliasedTable(wings, "wing_b");
+const spotA = aliasedTable(spots, "spot_a");
+const spotB = aliasedTable(spots, "spot_b");
+
 /* ── wings ───────────────────────────────────────────────────── */
 
-export async function listWings(opts: { sort?: "elo" | "new" | "tasted"; limit?: number } = {}) {
+export async function listWings(opts: { sort?: "elo" | "new" | "tasted"; limit?: number; typeId?: string } = {}) {
   const order =
     opts.sort === "new"
       ? [desc(wings.createdAt)]
@@ -46,16 +54,19 @@ export async function listWings(opts: { sort?: "elo" | "new" | "tasted"; limit?:
     .select(wingListSelect)
     .from(wings)
     .innerJoin(spots, eq(wings.spotId, spots.id))
+    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
     .leftJoin(tastingStats, eq(tastingStats.wingId, wings.id))
+    .where(opts.typeId ? eq(wings.wingTypeId, opts.typeId) : undefined)
     .orderBy(...order);
   return opts.limit ? q.limit(opts.limit) : q;
 }
 
 export async function getWing(id: string) {
   const [row] = await db
-    .select({ wing: wings, spot: spots })
+    .select({ wing: wings, spot: spots, type: wingTypes })
     .from(wings)
     .innerJoin(spots, eq(wings.spotId, spots.id))
+    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
     .where(eq(wings.id, id));
   if (!row) return null;
 
@@ -71,11 +82,21 @@ export async function getWing(id: string) {
     .from(wings)
     .where(sql`${wings.elo} > ${row.wing.elo}`);
 
+  let typePlace: number | null = null;
+  if (row.wing.wingTypeId) {
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*) + 1` })
+      .from(wings)
+      .where(and(eq(wings.wingTypeId, row.wing.wingTypeId), sql`${wings.elo} > ${row.wing.elo}`));
+    typePlace = Number(n);
+  }
+
   return {
     ...row,
     tastings: notes,
     averages: average(notes.map((n) => n.tasting as Scores)),
     place: Number(place),
+    typePlace,
   };
 }
 
@@ -89,9 +110,12 @@ export async function wingOptions() {
       heat: wings.heat,
       elo: wings.elo,
       spotName: spots.name,
+      typeId: wings.wingTypeId,
+      typeName: wingTypes.name,
     })
     .from(wings)
     .innerJoin(spots, eq(wings.spotId, spots.id))
+    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
     .orderBy(asc(spots.name), asc(wings.name));
 }
 
@@ -99,23 +123,43 @@ export type WingOption = Awaited<ReturnType<typeof wingOptions>>[number];
 
 /* ── spots ───────────────────────────────────────────────────── */
 
-export async function listSpots() {
-  const rows = await db
+const reviewStats = db
+  .select({
+    spotId: spotReviews.spotId,
+    reviewCount: count().as("review_count"),
+    avgTotal: sql<number>`avg(${spotReviews.wingGame} + ${spotReviews.sides} + ${spotReviews.vibe} + ${spotReviews.service} + ${spotReviews.value})`.as("avg_spot_total"),
+  })
+  .from(spotReviews)
+  .groupBy(spotReviews.spotId)
+  .as("rs");
+
+export type SpotListItem = Awaited<ReturnType<typeof listSpots>>[number];
+
+export async function listSpots(opts: { limit?: number } = {}) {
+  const wingCounts = db
+    .select({ spotId: wings.spotId, wingCount: count().as("wing_count"), bestWingElo: sql<number>`max(${wings.elo})`.as("best_wing_elo") })
+    .from(wings)
+    .groupBy(wings.spotId)
+    .as("wc");
+  const q = db
     .select({
       id: spots.id,
       name: spots.name,
       neighborhood: spots.neighborhood,
       description: spots.description,
-      wingCount: sql<number>`count(${wings.id})`,
-      bestElo: sql<number | null>`max(${wings.elo})`,
-      wins: sql<number>`coalesce(sum(${wings.wins}), 0)`,
-      losses: sql<number>`coalesce(sum(${wings.losses}), 0)`,
+      elo: spots.elo,
+      wins: spots.wins,
+      losses: spots.losses,
+      wingCount: sql<number>`coalesce(${wingCounts.wingCount}, 0)`,
+      bestWingElo: wingCounts.bestWingElo,
+      reviewCount: sql<number>`coalesce(${reviewStats.reviewCount}, 0)`,
+      avgTotal: reviewStats.avgTotal,
     })
     .from(spots)
-    .leftJoin(wings, eq(wings.spotId, spots.id))
-    .groupBy(spots.id)
-    .orderBy(desc(sql`max(${wings.elo})`), asc(spots.name));
-  return rows;
+    .leftJoin(wingCounts, eq(wingCounts.spotId, spots.id))
+    .leftJoin(reviewStats, eq(reviewStats.spotId, spots.id))
+    .orderBy(desc(spots.elo), asc(spots.name));
+  return opts.limit ? q.limit(opts.limit) : q;
 }
 
 export async function getSpot(id: string) {
@@ -125,18 +169,191 @@ export async function getSpot(id: string) {
     .select(wingListSelect)
     .from(wings)
     .innerJoin(spots, eq(wings.spotId, spots.id))
+    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
     .leftJoin(tastingStats, eq(tastingStats.wingId, wings.id))
     .where(eq(wings.spotId, id))
     .orderBy(desc(wings.elo));
-  return { spot, wings: spotWings };
+
+  const reviews = await db
+    .select({ review: spotReviews, userName: user.name })
+    .from(spotReviews)
+    .innerJoin(user, eq(spotReviews.userId, user.id))
+    .where(eq(spotReviews.spotId, id))
+    .orderBy(desc(spotReviews.createdAt));
+
+  const [{ place }] = await db
+    .select({ place: sql<number>`count(*) + 1` })
+    .from(spots)
+    .where(sql`${spots.elo} > ${spot.elo}`);
+
+  return {
+    spot,
+    wings: spotWings,
+    reviews,
+    averages: spotAverage(reviews.map((r) => r.review as SpotScores)),
+    place: Number(place),
+  };
 }
+
+/** Every spot, lightly, for the spot battle picker. */
+export async function spotOptions() {
+  return db
+    .select({ id: spots.id, name: spots.name, neighborhood: spots.neighborhood, elo: spots.elo })
+    .from(spots)
+    .orderBy(asc(spots.name));
+}
+
+export type SpotOption = Awaited<ReturnType<typeof spotOptions>>[number];
+
+/* ── spot battles ────────────────────────────────────────────── */
+
+const spotBattleSelect = {
+  id: spotBattles.id,
+  createdAt: spotBattles.createdAt,
+  verdict: spotBattles.verdict,
+  winnerId: spotBattles.winnerId,
+  eloBeforeA: spotBattles.eloBeforeA,
+  eloBeforeB: spotBattles.eloBeforeB,
+  eloDeltaA: spotBattles.eloDeltaA,
+  eloDeltaB: spotBattles.eloDeltaB,
+  userId: spotBattles.userId,
+  userName: user.name,
+  a: { id: spotA.id, name: spotA.name, neighborhood: spotA.neighborhood },
+  b: { id: spotB.id, name: spotB.name, neighborhood: spotB.neighborhood },
+};
+
+function spotBattleQuery() {
+  return db
+    .select(spotBattleSelect)
+    .from(spotBattles)
+    .innerJoin(user, eq(spotBattles.userId, user.id))
+    .innerJoin(spotA, eq(spotBattles.spotAId, spotA.id))
+    .innerJoin(spotB, eq(spotBattles.spotBId, spotB.id));
+}
+
+export type SpotBattleListItem = Awaited<ReturnType<typeof recentSpotBattles>>[number];
+
+export async function recentSpotBattles(opts: { limit?: number; spotId?: string; userId?: string } = {}) {
+  const filters = [];
+  if (opts.spotId) filters.push(or(eq(spotBattles.spotAId, opts.spotId), eq(spotBattles.spotBId, opts.spotId)));
+  if (opts.userId) filters.push(eq(spotBattles.userId, opts.userId));
+  return spotBattleQuery()
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(desc(spotBattles.createdAt), desc(sql`"spot_battles"."rowid"`))
+    .limit(opts.limit ?? 20);
+}
+
+export async function getSpotBattle(id: string) {
+  const [battle] = await spotBattleQuery().where(eq(spotBattles.id, id));
+  if (!battle) return null;
+  const cards = await db.select().from(spotReviews).where(eq(spotReviews.spotBattleId, id));
+  const cardA = cards.find((c) => c.spotId === battle.a.id) ?? null;
+  const cardB = cards.find((c) => c.spotId === battle.b.id) ?? null;
+  const h2h = await db
+    .select({ winnerId: spotBattles.winnerId, n: count() })
+    .from(spotBattles)
+    .where(
+      or(
+        and(eq(spotBattles.spotAId, battle.a.id), eq(spotBattles.spotBId, battle.b.id)),
+        and(eq(spotBattles.spotAId, battle.b.id), eq(spotBattles.spotBId, battle.a.id)),
+      ),
+    )
+    .groupBy(spotBattles.winnerId);
+  const record = {
+    a: h2h.find((r) => r.winnerId === battle.a.id)?.n ?? 0,
+    b: h2h.find((r) => r.winnerId === battle.b.id)?.n ?? 0,
+  };
+  return { battle, cardA, cardB, record };
+}
+
+/* ── wing types ──────────────────────────────────────────────── */
+
+/**
+ * Win/loss record of each wing type in battles *between different types*
+ * (Buffalo vs Buffalo tells us nothing about Buffalo as a whole).
+ */
+async function crossTypeRecords() {
+  const rows = await db
+    .select({ typeA: wingA.wingTypeId, typeB: wingB.wingTypeId, aWon: sql<number>`${battles.winnerId} = ${battles.wingAId}` })
+    .from(battles)
+    .innerJoin(wingA, eq(battles.wingAId, wingA.id))
+    .innerJoin(wingB, eq(battles.wingBId, wingB.id))
+    .where(sql`${wingA.wingTypeId} is not null and ${wingB.wingTypeId} is not null and ${wingA.wingTypeId} != ${wingB.wingTypeId}`);
+  const rec = new Map<string, { wins: number; losses: number }>();
+  const bump = (id: string, won: boolean) => {
+    const r = rec.get(id) ?? { wins: 0, losses: 0 };
+    if (won) r.wins++;
+    else r.losses++;
+    rec.set(id, r);
+  };
+  for (const r of rows) {
+    bump(r.typeA!, !!r.aWon);
+    bump(r.typeB!, !r.aWon);
+  }
+  return rec;
+}
+
+export type WingTypeListItem = Awaited<ReturnType<typeof listWingTypes>>[number];
+
+export async function listWingTypes() {
+  const champ = aliasedTable(wings, "type_champ");
+  const rows = await db
+    .select({
+      id: wingTypes.id,
+      name: wingTypes.name,
+      emoji: wingTypes.emoji,
+      description: wingTypes.description,
+      wingCount: count(wings.id),
+      avgElo: sql<number | null>`avg(${wings.elo})`,
+      bestElo: sql<number | null>`max(${wings.elo})`,
+    })
+    .from(wingTypes)
+    .leftJoin(wings, eq(wings.wingTypeId, wingTypes.id))
+    .groupBy(wingTypes.id);
+
+  // The best wing of each type.
+  const tops = await db
+    .select({ typeId: champ.wingTypeId, id: champ.id, name: champ.name, heat: champ.heat, style: champ.style, elo: champ.elo, spotName: spots.name })
+    .from(champ)
+    .innerJoin(spots, eq(champ.spotId, spots.id))
+    .where(sql`${champ.elo} = (select max(w2.elo) from wings w2 where w2.wing_type_id = ${champ.wingTypeId})`);
+  const topByType = new Map(tops.map((t) => [t.typeId, t]));
+  const records = await crossTypeRecords();
+
+  return rows
+    .map((r) => {
+      const rec = records.get(r.id) ?? { wins: 0, losses: 0 };
+      return { ...r, ...rec, top: topByType.get(r.id) ?? null };
+    })
+    .sort((x, y) => {
+      // Types with wings first, then types with a cross-type record (by win rate), then by average rating.
+      if (!!x.wingCount !== !!y.wingCount) return x.wingCount ? -1 : 1;
+      const px = x.wins + x.losses;
+      const py = y.wins + y.losses;
+      if (!!px !== !!py) return px ? -1 : 1;
+      const rx = px ? x.wins / px : 0;
+      const ry = py ? y.wins / py : 0;
+      if (rx !== ry) return ry - rx;
+      return Number(y.avgElo ?? 0) - Number(x.avgElo ?? 0);
+    });
+}
+
+export async function getWingType(id: string) {
+  const [type] = await db.select().from(wingTypes).where(eq(wingTypes.id, id));
+  if (!type) return null;
+  const typeWings = await listWings({ typeId: id });
+  const record = (await crossTypeRecords()).get(id) ?? { wins: 0, losses: 0 };
+  return { type, wings: typeWings, record };
+}
+
+export async function wingTypeOptions() {
+  return db.select({ id: wingTypes.id, name: wingTypes.name, emoji: wingTypes.emoji }).from(wingTypes).orderBy(asc(wingTypes.name));
+}
+
+export type WingTypeOption = Awaited<ReturnType<typeof wingTypeOptions>>[number];
 
 /* ── battles ─────────────────────────────────────────────────── */
 
-const wingA = aliasedTable(wings, "wing_a");
-const wingB = aliasedTable(wings, "wing_b");
-const spotA = aliasedTable(spots, "spot_a");
-const spotB = aliasedTable(spots, "spot_b");
 
 const battleSelect = {
   id: battles.id,
@@ -270,35 +487,54 @@ export async function getJudge(userId: string) {
 
   const tasted = new Set(notes.map((n) => n.tasting.wingId));
 
+  const reviews = await db
+    .select({ review: spotReviews, spotName: spots.name })
+    .from(spotReviews)
+    .innerJoin(spots, eq(spotReviews.spotId, spots.id))
+    .where(eq(spotReviews.userId, userId))
+    .orderBy(desc(spotReviews.createdAt))
+    .limit(50);
+
+  const [{ spotBattleCount }] = await db
+    .select({ spotBattleCount: count() })
+    .from(spotBattles)
+    .where(eq(spotBattles.userId, userId));
+
   return {
     judge,
     tastings: notes,
+    reviews,
     battleCount,
+    spotBattleCount,
     tastedWingCount: tasted.size,
     battles: await recentBattles({ userId, limit: 10 }),
+    spotBattles: await recentSpotBattles({ userId, limit: 10 }),
   };
 }
 
 export async function topJudges(limit = 5) {
+  // Spelled out: drizzle drops the table prefix on single-table queries, which breaks the correlation.
+  const n = sql<number>`(select count(*) from battles b where b.user_id = "user"."id") + (select count(*) from spot_battles sb where sb.user_id = "user"."id")`;
   return db
-    .select({ id: user.id, name: user.name, battles: count(battles.id) })
+    .select({ id: user.id, name: user.name, battles: n })
     .from(user)
-    .innerJoin(battles, eq(battles.userId, user.id))
-    .groupBy(user.id)
-    .orderBy(desc(count(battles.id)))
+    .where(sql`${n} > 0`)
+    .orderBy(desc(n))
     .limit(limit);
 }
 
 /* ── home page ───────────────────────────────────────────────── */
 
 export async function worldStats() {
-  const [[w], [s], [b], [t]] = await Promise.all([
+  const [[w], [s], [b], [sb], [t], [r]] = await Promise.all([
     db.select({ n: count() }).from(wings),
     db.select({ n: count() }).from(spots),
     db.select({ n: count() }).from(battles),
+    db.select({ n: count() }).from(spotBattles),
     db.select({ n: count() }).from(tastings),
+    db.select({ n: count() }).from(spotReviews),
   ]);
-  return { wings: w.n, spots: s.n, battles: b.n, tastings: t.n };
+  return { wings: w.n, spots: s.n, battles: b.n + sb.n, tastings: t.n + r.n };
 }
 
 export async function wingsByIds(ids: string[]) {

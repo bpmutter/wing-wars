@@ -27,6 +27,7 @@ const NAV = [
   { href: "/battle", label: "Battle!", emoji: "⚔️" },
   { href: "/leaderboard", label: "Leaderboard", emoji: "🏆" },
   { href: "/spots", label: "Spots", emoji: "🏮" },
+  { href: "/types", label: "Wing Types", emoji: "🍃" },
   { href: "/tournament", label: "Tournament", emoji: "🏯" },
 ];
 
