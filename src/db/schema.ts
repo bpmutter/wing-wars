@@ -3,6 +3,8 @@ import {
   integer,
   sqliteTable,
   text,
+  uniqueIndex,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { nanoid } from "nanoid";
 
@@ -103,15 +105,12 @@ export const wingTypes = sqliteTable("wing_types", {
   createdAt: createdAt(),
 });
 
-/** A restaurant / bar / shack that serves wings. Spots are judged too. */
+/** A restaurant / bar / shack that serves wings. */
 export const spots = sqliteTable("spots", {
   id: id(),
   name: text("name").notNull(),
   neighborhood: text("neighborhood").notNull().default(""),
   description: text("description").notNull().default(""),
-  elo: integer("elo").notNull().default(1200),
-  wins: integer("wins").notNull().default(0),
-  losses: integer("losses").notNull().default(0),
   createdById: text("created_by_id").references(() => user.id, {
     onDelete: "set null",
   }),
@@ -136,79 +135,85 @@ export const wings = sqliteTable(
     /** Heat as advertised by the spot, 0 (none) – 5 (volcanic). */
     heat: integer("heat").notNull().default(1),
     description: text("description").notNull().default(""),
-    elo: integer("elo").notNull().default(1200),
-    wins: integer("wins").notNull().default(0),
-    losses: integer("losses").notNull().default(0),
     createdById: text("created_by_id").references(() => user.id, {
       onDelete: "set null",
     }),
     createdAt: createdAt(),
   },
+  (t) => [index("wings_spot_idx").on(t.spotId), index("wings_type_idx").on(t.wingTypeId)],
+);
+
+/**
+ * A war: a long-running wing crawl. People join, visit every battleground
+ * (restaurant) in it, score the wings they eat there, and when the war ends
+ * a champion is computed from everyone's scorecards.
+ */
+export const wars = sqliteTable(
+  "wars",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    hostId: text("host_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** If set, only wings of this type count (e.g. "The Great Buffalo War"). */
+    wingTypeId: text("wing_type_id").references(() => wingTypes.id, {
+      onDelete: "set null",
+    }),
+    /** Fog of war: standings stay hidden until the war ends. */
+    fogOfWar: integer("fog_of_war", { mode: "boolean" }).notNull().default(true),
+    /** Optional deadline; the war ends automatically when it passes. */
+    endsAt: integer("ends_at", { mode: "timestamp_ms" }),
+    /** Set when the host ends the war early. */
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("wars_host_idx").on(t.hostId)],
+);
+
+/** A restaurant taking part in a war. Each one is a battle within the war. */
+export const warBattlegrounds = sqliteTable(
+  "war_battlegrounds",
+  {
+    id: id(),
+    warId: text("war_id")
+      .notNull()
+      .references(() => wars.id, { onDelete: "cascade" }),
+    spotId: text("spot_id")
+      .notNull()
+      .references(() => spots.id, { onDelete: "cascade" }),
+    addedById: text("added_by_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("war_battlegrounds_war_spot_uq").on(t.warId, t.spotId)],
+);
+
+/** Someone who has joined a war. */
+export const warMembers = sqliteTable(
+  "war_members",
+  {
+    id: id(),
+    warId: text("war_id")
+      .notNull()
+      .references(() => wars.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    joinedAt: createdAt(),
+  },
   (t) => [
-    index("wings_spot_idx").on(t.spotId),
-    index("wings_elo_idx").on(t.elo),
-    index("wings_type_idx").on(t.wingTypeId),
+    uniqueIndex("war_members_war_user_uq").on(t.warId, t.userId),
+    index("war_members_user_idx").on(t.userId),
   ],
 );
 
 /**
- * A tournament: a single-elimination bracket a user plays through.
- * Every match in it is stored as a battle.
+ * One person's scorecard for one wing. With a warId it's a war scorecard
+ * (one per judge per wing per war); without, it's a solo tasting.
  */
-export const tournaments = sqliteTable("tournaments", {
-  id: id(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  size: integer("size").notNull(),
-  championId: text("champion_id").references(() => wings.id, {
-    onDelete: "set null",
-  }),
-  createdAt: createdAt(),
-});
-
-/** A head-to-head battle between two wings, judged by one user. */
-export const battles = sqliteTable(
-  "battles",
-  {
-    id: id(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    wingAId: text("wing_a_id")
-      .notNull()
-      .references(() => wings.id, { onDelete: "cascade" }),
-    wingBId: text("wing_b_id")
-      .notNull()
-      .references(() => wings.id, { onDelete: "cascade" }),
-    winnerId: text("winner_id")
-      .notNull()
-      .references(() => wings.id, { onDelete: "cascade" }),
-    /** "duel" = full scorecards, "tournament" = quick pick inside a bracket. */
-    kind: text("kind", { enum: ["duel", "tournament"] })
-      .notNull()
-      .default("duel"),
-    tournamentId: text("tournament_id").references(() => tournaments.id, {
-      onDelete: "cascade",
-    }),
-    round: integer("round"),
-    eloBeforeA: integer("elo_before_a").notNull(),
-    eloBeforeB: integer("elo_before_b").notNull(),
-    eloDeltaA: integer("elo_delta_a").notNull(),
-    eloDeltaB: integer("elo_delta_b").notNull(),
-    verdict: text("verdict").notNull().default(""),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    index("battles_user_idx").on(t.userId),
-    index("battles_a_idx").on(t.wingAId),
-    index("battles_b_idx").on(t.wingBId),
-    index("battles_created_idx").on(t.createdAt),
-  ],
-);
-
-/** One person's scorecard for one wing. Battles create two of these. */
 export const tastings = sqliteTable(
   "tastings",
   {
@@ -219,7 +224,7 @@ export const tastings = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    battleId: text("battle_id").references(() => battles.id, {
+    warId: text("war_id").references((): AnySQLiteColumn => wars.id, {
       onDelete: "cascade",
     }),
     crisp: integer("crisp").notNull(),
@@ -233,42 +238,11 @@ export const tastings = sqliteTable(
   (t) => [
     index("tastings_wing_idx").on(t.wingId),
     index("tastings_user_idx").on(t.userId),
+    uniqueIndex("tastings_war_user_wing_uq").on(t.warId, t.userId, t.wingId),
   ],
 );
 
-/** A head-to-head battle between two restaurants, judged on the whole experience. */
-export const spotBattles = sqliteTable(
-  "spot_battles",
-  {
-    id: id(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    spotAId: text("spot_a_id")
-      .notNull()
-      .references(() => spots.id, { onDelete: "cascade" }),
-    spotBId: text("spot_b_id")
-      .notNull()
-      .references(() => spots.id, { onDelete: "cascade" }),
-    winnerId: text("winner_id")
-      .notNull()
-      .references(() => spots.id, { onDelete: "cascade" }),
-    eloBeforeA: integer("elo_before_a").notNull(),
-    eloBeforeB: integer("elo_before_b").notNull(),
-    eloDeltaA: integer("elo_delta_a").notNull(),
-    eloDeltaB: integer("elo_delta_b").notNull(),
-    verdict: text("verdict").notNull().default(""),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    index("spot_battles_user_idx").on(t.userId),
-    index("spot_battles_a_idx").on(t.spotAId),
-    index("spot_battles_b_idx").on(t.spotBId),
-    index("spot_battles_created_idx").on(t.createdAt),
-  ],
-);
-
-/** One person's scorecard for a restaurant. Spot battles create two of these. */
+/** One person's scorecard for a restaurant as a whole. Optionally part of a war. */
 export const spotReviews = sqliteTable(
   "spot_reviews",
   {
@@ -279,7 +253,7 @@ export const spotReviews = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    spotBattleId: text("spot_battle_id").references(() => spotBattles.id, {
+    warId: text("war_id").references((): AnySQLiteColumn => wars.id, {
       onDelete: "cascade",
     }),
     wingGame: integer("wing_game").notNull(),
@@ -293,14 +267,13 @@ export const spotReviews = sqliteTable(
   (t) => [
     index("spot_reviews_spot_idx").on(t.spotId),
     index("spot_reviews_user_idx").on(t.userId),
+    uniqueIndex("spot_reviews_war_user_spot_uq").on(t.warId, t.userId, t.spotId),
   ],
 );
 
 export type WingType = typeof wingTypes.$inferSelect;
 export type Spot = typeof spots.$inferSelect;
 export type Wing = typeof wings.$inferSelect;
-export type Battle = typeof battles.$inferSelect;
 export type Tasting = typeof tastings.$inferSelect;
-export type Tournament = typeof tournaments.$inferSelect;
-export type SpotBattle = typeof spotBattles.$inferSelect;
 export type SpotReview = typeof spotReviews.$inferSelect;
+export type War = typeof wars.$inferSelect;

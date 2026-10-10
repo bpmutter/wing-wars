@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { EmptyState, PageHeader, StatPill } from "@/components/bits";
-import { WingCard } from "@/components/cards";
-import { winRate } from "@/lib/format";
+import { EmptyState, PageHeader, SectionTitle, StatPill } from "@/components/bits";
+import { WarCard, WingCard } from "@/components/cards";
 import { getWingType } from "@/lib/queries";
+import { MAX_TOTAL } from "@/lib/scoring";
 
 export const metadata: Metadata = { title: "Wing type" };
 
@@ -14,8 +14,11 @@ export default async function WingTypePage({ params }: PageProps<"/types/[id]">)
   const { id } = await params;
   const data = await getWingType(id);
   if (!data) notFound();
-  const { type, wings, record } = data;
-  const rate = winRate(record.wins, record.losses);
+  const { type, wings, wars } = data;
+  const now = new Date();
+  const tasted = wings.filter((w) => w.avgTotal !== null);
+  const n = tasted.reduce((s, w) => s + w.tastingCount, 0);
+  const avg = n ? tasted.reduce((s, w) => s + w.avgTotal! * w.tastingCount, 0) / n : null;
   const spots = new Set(wings.map((w) => w.spotId)).size;
 
   return (
@@ -26,13 +29,13 @@ export default async function WingTypePage({ params }: PageProps<"/types/[id]">)
       <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatPill label="Wings" value={wings.length} />
         <StatPill label="Spots" value={spots} />
-        <StatPill label="vs other types" value={`${record.wins}–${record.losses}`} />
-        <StatPill label="Win rate" value={rate === null ? "—" : `${rate}%`} />
+        <StatPill label="Scorecards" value={n} />
+        <StatPill label="Avg score" value={avg !== null ? `${avg.toFixed(1)}/${MAX_TOTAL}` : "—"} />
       </div>
-      {wings.length >= 2 && (
-        <div className="mb-6">
-          <Link href={`/battle?a=${wings[0].id}&b=${wings[1].id}`} className="btn btn-primary">
-            ⚔️ {type.name} vs {type.name}: battle the top two
+      {spots >= 2 && (
+        <div className="mb-8">
+          <Link href="/wars/new" className="btn btn-primary">
+            🏯 Start a {type.name} war
           </Link>
         </div>
       )}
@@ -41,12 +44,24 @@ export default async function WingTypePage({ params }: PageProps<"/types/[id]">)
       ) : (
         <div className="grid gap-3">
           {wings.map((w, i) => (
-            <WingCard key={w.id} wing={w} place={i + 1} />
+            <WingCard key={w.id} wing={w} place={w.score !== null ? i + 1 : undefined} />
           ))}
         </div>
       )}
+      {wars.length > 0 && (
+        <section className="mt-12">
+          <SectionTitle>{type.name} wars</SectionTitle>
+          <div className="grid gap-4 md:grid-cols-2">
+            {wars.map((w) => (
+              <WarCard key={w.id} war={w} now={now} />
+            ))}
+          </div>
+        </section>
+      )}
       <p className="mt-8 text-sm">
-        <Link href="/types" className="link">← All wing types</Link>
+        <Link href="/types" className="link">
+          ← All wing types
+        </Link>
       </p>
     </div>
   );

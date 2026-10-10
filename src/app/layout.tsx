@@ -20,15 +20,14 @@ const zen = Zen_Maru_Gothic({
 
 export const metadata: Metadata = {
   title: { default: "Wing Wars", template: "%s · Wing Wars" },
-  description: "Pit chicken wings from different spots against each other, judge them on the five elements, and crown a Great Sauce Spirit.",
+  description: "Start a wing war with your friends, eat your way through every restaurant in it, score what you find, and crown a champion when the war ends.",
 };
 
 const NAV = [
-  { href: "/battle", label: "Battle!", emoji: "⚔️" },
-  { href: "/leaderboard", label: "Leaderboard", emoji: "🏆" },
+  { href: "/wars", label: "Wars", emoji: "⚔️" },
+  { href: "/leaderboard", label: "Hall of Fame", emoji: "🏆" },
   { href: "/spots", label: "Spots", emoji: "🏮" },
   { href: "/types", label: "Wing Types", emoji: "🍃" },
-  { href: "/tournament", label: "Tournament", emoji: "🏯" },
 ];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

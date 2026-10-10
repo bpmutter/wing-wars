@@ -27,7 +27,7 @@ turso db tokens create wing-wars       # → TURSO_AUTH_TOKEN
 - [ ] Database created
 - [ ] Have `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`
 
-> **Optional:** want the demo world (spots, wings, battles) in production too? Run this once from your machine
+> **Optional:** want the demo world (spots, wings, wars) in production too? Run this once from your machine
 > with the prod env vars set:
 > `TURSO_DATABASE_URL=… TURSO_AUTH_TOKEN=… npm run db:seed`
 > It only seeds an empty database. Note: it creates demo users whose password is the public demo password, so
@@ -70,9 +70,9 @@ and put the values in `.env.local`.)
 
 ## 5. Smoke-test production
 
-- [ ] Sign up, add a spot, add two wings, run a battle, check the leaderboard
+- [ ] Sign up, declare a war over two spots, score a wing, end the war, check the Hall of Fame
 - [ ] Or run the e2e test against it: `BASE_URL=https://<your-domain> npx playwright test`. Note that it creates a
-      test user, a spot called "Playwright Pub" and a battle, so you may want to point it at a preview deploy
+      test user, a spot called "Playwright Pub" and a war, so you may want to point it at a preview deploy
       instead.
 
 ---
@@ -81,26 +81,39 @@ and put the values in `.env.local`.)
 
 These are ideas I deliberately left out to keep v1 tight.
 
+### Wars
+- **Private / invite-only wars.** Every war is public, and anyone signed in can join from its link. An invite
+  code or "host approves members" switch would suit friend groups that want a closed war.
+- **Leaving a war, removing battlegrounds.** Neither is possible yet. If someone adds the wrong spot, it stays.
+  The host should probably be able to remove battlegrounds and members.
+- **Notifications.** Nobody is told when a war they're in ends. An email (needs an email provider) or a "your
+  wars" badge in the header would make the reveal land better.
+- **Stored results.** A war's results are computed fresh on every page view, and the Hall of Fame recomputes
+  every concluded war to count crowns. That's instant at this scale. If there are ever hundreds of wars,
+  snapshot the results into a table when a war ends.
+- **Time zones.** "The war ends on" means 23:59:59 in the *server's* time zone, which is UTC on Vercel. Store the
+  host's time zone if precise endings ever matter.
+- **Judge calibration.** Some judges are harsh and some are generous. The Bayesian average handles thin
+  coverage, but per-judge normalization (z-scoring each judge's scores) would make wars fairer still.
+  It's easy to add in `src/lib/war-results.ts`, but harder to explain on the results page.
+
+### Everything else
 - **Email verification & password reset.** Both are off. Better Auth supports them, but they need an email
   provider (e.g. Resend's free tier). Until then, a forgotten password means a new account.
-- **Uncategorized wings.** The `0001` migration adds wing types, and wings created before it get no type. Any
-  signed-in user can assign one from the wing's page. This only matters for a local DB created before the
-  change (nothing has been deployed yet).
-- **Spot tournaments.** Tournaments are wing-only for now. The bracket logic is generic, so a spot bracket would
-  be a small addition.
+- **Old local databases.** The migrations upgrade a database from any earlier version of this app and keep every
+  scorecard. Wings created before wing types existed show as "Uncategorized" and can be assigned a type from
+  their page. This only matters for a local DB, since nothing has been deployed yet.
 - **Moderation / editing.** Spots and wings can't be edited or deleted from the UI yet, so typos are forever.
   You'd want an "owner can edit" rule and probably an admin role.
 - **Duplicate spots and types.** Nothing stops two people adding "Joe's Wings" twice. Wing types are matched
   case-insensitively, but near-duplicates like "Buffalo" and "Buffalo Classic" can still both exist.
   Fuzzy-match warnings on the add forms would help.
-- **Rate limiting.** Anyone signed in can spam battles to pump a wing's (or spot's) Elo. Ideas: one battle per pair per judge
-  per day, or weight each judge's influence.
-- **Photos.** Real wing photos would be fun (Vercel Blob has a free tier). The generated wing spirits fill that
-  role for now.
+- **Abuse.** Someone could create lots of accounts and stuff a war with scorecards. For friend-group wars,
+  invite-only mode (above) is the real fix.
+- **Photos.** Real wing photos would be fun (Vercel Blob has a free tier). The generated spirits fill that role
+  for now.
 - **Maps / location.** Spots have a free-text neighborhood. Adding coordinates would allow a "near me" view and
-  a Ghibli-style hand-drawn map page.
-- **Friends / groups.** Wing-night tournaments are currently saved by one host. Group tournaments where several
-  judges vote per match would be a natural next step.
+  a Ghibli-style hand-drawn map of a war's battlegrounds.
 - **Caching.** Every page reads fresh from the DB on each request (`connection()` + Suspense). That's fine at
   this scale. If traffic grows, wrap the read queries in `"use cache"` with `cacheTag`s and call `updateTag` in
   the server actions.

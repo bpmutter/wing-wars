@@ -4,11 +4,12 @@ import { useActionState } from "react";
 import { createSpot, type FormState } from "@/app/actions";
 import { Field, FormError, SubmitButton } from "@/components/form-bits";
 
-export function SpotForm() {
+export function SpotForm({ warId }: { warId?: string }) {
   const [state, action] = useActionState<FormState, FormData>(createSpot, null);
   const fe = state?.fieldErrors ?? {};
   return (
     <form action={action} className="card grid gap-5 p-6">
+      {warId && <input type="hidden" name="warId" value={warId} />}
       <Field label="Name" error={fe.name}>
         <input name="name" required maxLength={80} className="field" placeholder="The Copper Kettle" />
       </Field>

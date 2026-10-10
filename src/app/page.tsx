@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { BattleCard, SpotBattleCard, SpotCard, WingCard } from "@/components/cards";
-import { EmptyState, HeatPips, RankBadge, SectionTitle, StatPill } from "@/components/bits";
-import { Radar } from "@/components/radar";
+import { EmptyState, SectionTitle, StatPill } from "@/components/bits";
+import { SpotCard, WarCard, WingCard } from "@/components/cards";
 import { Scenery } from "@/components/scenery";
-import { WingSpirit } from "@/components/wing-spirit";
-import { getWing, listSpots, listWings, recentBattles, recentSpotBattles, recentTournaments, worldStats } from "@/lib/queries";
+import { SpotSpirit } from "@/components/spot-spirit";
+import { listSpots, listWars, listWings, worldStats } from "@/lib/queries";
+import { getCurrentUser } from "@/lib/session";
 
 export default function Home() {
   return (
@@ -18,21 +18,21 @@ export default function Home() {
             🍃 A gentle tale of crispy skin and fierce rivalry
           </p>
           <h1 className="max-w-3xl text-5xl leading-[1.02] font-semibold text-ink drop-shadow-[0_2px_0_var(--paper)] sm:text-7xl animate-rise">
-            Two wings enter.
+            Declare war.
             <br />
-            <span className="text-sauce">One wing</span> is crowned.
+            <span className="text-sauce">Eat everywhere.</span> Crown a champion.
           </h1>
           <p className="mt-5 max-w-xl rounded-2xl bg-card/75 p-4 text-lg text-ink backdrop-blur animate-rise">
-            Wing Wars is where you pit chicken wings from different spots against each other, judge them on the
-            five elements — <b>crisp, sauce, juiciness, heat &amp; value</b> — and watch the rankings shift like
-            clouds over the hills.
+            A wing war is a campaign across the restaurants in your town. Rally your friends, visit every
+            battleground, score each wing on the five elements — <b>crisp, sauce, juiciness, heat &amp; value</b> —
+            and when the war ends, the champion rises from the mist.
           </p>
           <div className="mt-7 flex flex-wrap gap-3 animate-rise">
-            <Link href="/battle" className="btn btn-primary text-lg">
-              ⚔️ Start a battle
+            <Link href="/wars/new" className="btn btn-primary text-lg">
+              🏯 Start a war
             </Link>
-            <Link href="/leaderboard" className="btn btn-secondary text-lg">
-              🏆 The leaderboard
+            <Link href="/wars" className="btn btn-secondary text-lg">
+              ⚔️ Join a war
             </Link>
           </div>
         </div>
@@ -44,15 +44,17 @@ export default function Home() {
         </Suspense>
 
         <section className="mt-20">
-          <SectionTitle>How the wars are waged</SectionTitle>
+          <SectionTitle>How a war is waged</SectionTitle>
           <div className="grid gap-4 md:grid-cols-3">
             {[
-              { n: "1", t: "Gather your contenders", d: "Add the spots you love (or love to hate) and the wings they serve, sorted into types like Buffalo or Lemon Pepper.", e: "🏮" },
-              { n: "2", t: "Battle head-to-head", d: "Wing vs wing on the five elements, or spot vs spot on the whole experience. Ratings move by Elo — upsets earn more.", e: "⚔️" },
-              { n: "3", t: "Crown a champion", d: "Climb from Lost Crumb to Great Sauce Spirit, or run an 8-wing tournament bracket with your friends.", e: "👑" },
+              { t: "Declare a war", d: "Pick the restaurants (each one is a battle), choose which wings count — maybe Buffalo only — and set an end date. Share the link to recruit judges.", e: "🏯" },
+              { t: "Eat across the land", d: "Visit every battleground and score each wing you eat. The fog of war keeps the standings hidden, so nobody follows the crowd.", e: "🍗" },
+              { t: "The grand reveal", d: "When the war ends, the scores are tallied, the champion is crowned, and honors go to the best wing, the crispiest, the saucy-est and more.", e: "👑" },
             ].map((s) => (
-              <div key={s.n} className="card p-6">
-                <div className="mb-3 text-3xl" aria-hidden>{s.e}</div>
+              <div key={s.t} className="card p-6">
+                <div className="mb-3 text-3xl" aria-hidden>
+                  {s.e}
+                </div>
                 <h3 className="text-xl font-semibold">{s.t}</h3>
                 <p className="mt-2 text-ink-soft">{s.d}</p>
               </div>
@@ -67,124 +69,91 @@ export default function Home() {
 async function HomeData() {
   await connection();
   const now = new Date();
-  const [top, battles, stats, tourneys, topSpots, showdowns] = await Promise.all([
-    listWings({ limit: 6 }),
-    recentBattles({ limit: 6 }),
-    worldStats(),
-    recentTournaments(3),
+  const [{ active, ended }, topWings, topSpots, stats, user] = await Promise.all([
+    listWars(),
+    listWings({ limit: 5 }),
     listSpots({ limit: 3 }),
-    recentSpotBattles({ limit: 3 }),
+    worldStats(),
+    getCurrentUser(),
   ]);
-
-  if (top.length === 0) {
-    return (
-      <div className="-mt-16 relative">
-        <EmptyState title="The meadow is quiet…" action={{ href: "/spots/new", label: "Add the first spot" }}>
-          No wings have entered the arena yet. Add a spot and its wings, then start a battle.
-        </EmptyState>
-      </div>
-    );
-  }
-
-  const champ = await getWing(top[0].id);
+  const latest = ended.find((w) => w.champion);
 
   return (
     <>
-      {champ && (
+      {latest?.champion ? (
         <section className="relative -mt-24 card overflow-hidden p-6 sm:p-8">
-          <div className="grid items-center gap-6 md:grid-cols-[auto_1fr_auto]">
-            <div className="flex flex-col items-center">
-              <WingSpirit seed={champ.wing.id} heat={champ.wing.heat} style={champ.wing.style} size={150} crowned className="animate-bob" />
+          <div className="grid items-center gap-6 md:grid-cols-[auto_1fr]">
+            <div className="flex justify-center">
+              <SpotSpirit seed={latest.champion.spotId} size={150} crowned className="animate-bob" />
             </div>
             <div>
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">👑 Reigning champion</p>
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">👑 Latest war champion</p>
               <h2 className="mt-1 text-3xl font-semibold sm:text-4xl">
-                <Link href={`/wings/${champ.wing.id}`} className="link">{champ.wing.name}</Link>
+                <Link href={`/spots/${latest.champion.spotId}`} className="link">
+                  {latest.champion.name}
+                </Link>
               </h2>
               <p className="text-ink-soft">
-                from <Link className="link" href={`/spots/${champ.spot.id}`}>{champ.spot.name}</Link>
-                {champ.spot.neighborhood && <> · {champ.spot.neighborhood}</>}
+                won{" "}
+                <Link className="link" href={`/wars/${latest.id}`}>
+                  {latest.name}
+                </Link>{" "}
+                against {latest.battlegroundCount - 1} other spot{latest.battlegroundCount === 2 ? "" : "s"}, judged by {latest.memberCount}.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <RankBadge elo={champ.wing.elo} />
-                <HeatPips heat={champ.wing.heat} />
-                <span className="chip">{champ.wing.wins}W – {champ.wing.losses}L</span>
-              </div>
               <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatPill label="Wings" value={stats.wings} />
+                <StatPill label="Wars" value={stats.wars} />
                 <StatPill label="Spots" value={stats.spots} />
-                <StatPill label="Battles" value={stats.battles} />
-                <StatPill label="Scorecards" value={stats.tastings} />
+                <StatPill label="Wings" value={stats.wings} />
+                <StatPill label="Scorecards" value={stats.scorecards} />
               </div>
             </div>
-            {champ.averages && (
-              <div className="hidden justify-center lg:flex">
-                <Radar series={[{ scores: champ.averages, color: "var(--sauce)", label: champ.wing.name }]} size={230} />
-              </div>
-            )}
           </div>
         </section>
+      ) : (
+        <div className="relative -mt-16" />
       )}
 
-      <div className="mt-14 grid gap-10 lg:grid-cols-[1.1fr_1fr]">
+      <section className="mt-14">
+        <SectionTitle action={{ href: "/wars", label: "All wars" }}>Wars raging now</SectionTitle>
+        {active.length === 0 ? (
+          <EmptyState title="All is quiet on the wing front" action={{ href: "/wars/new", label: "Start a war" }}>
+            No wars are underway right now.
+          </EmptyState>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {active.slice(0, 4).map((w) => (
+              <WarCard key={w.id} war={w} now={now} viewerId={user?.id} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="mt-14 grid gap-10 lg:grid-cols-2">
         <section>
-          <SectionTitle action={{ href: "/battles", label: "All battles" }}>Fresh from the battlefield</SectionTitle>
-          {battles.length === 0 ? (
-            <EmptyState title="No battles yet" action={{ href: "/battle", label: "Start one" }} />
+          <SectionTitle action={{ href: "/leaderboard", label: "Hall of Fame" }}>Most beloved wings</SectionTitle>
+          {topWings.length === 0 ? (
+            <EmptyState title="No wings yet" action={{ href: "/spots/new", label: "Add a spot" }} />
           ) : (
             <div className="grid gap-3">
-              {battles.map((b) => (
-                <BattleCard key={b.id} battle={b} now={now} />
+              {topWings.map((w, i) => (
+                <WingCard key={w.id} wing={w} place={i + 1} />
               ))}
             </div>
           )}
-          {showdowns.length > 0 && (
-            <div className="mt-8">
-              <SectionTitle action={{ href: "/battles?kind=spots", label: "All showdowns" }}>Spot showdowns</SectionTitle>
-              <div className="grid gap-3">
-                {showdowns.map((b) => (
-                  <SpotBattleCard key={b.id} battle={b} now={now} />
-                ))}
-              </div>
-            </div>
-          )}
         </section>
         <section>
-          <SectionTitle action={{ href: "/leaderboard", label: "Full leaderboard" }}>Top of the hill</SectionTitle>
+          <SectionTitle action={{ href: "/leaderboard?board=spots", label: "All spots" }}>Most beloved spots</SectionTitle>
           <div className="grid gap-3">
-            {top.map((w, i) => (
-              <WingCard key={w.id} wing={w} place={i + 1} />
+            {topSpots.map((s, i) => (
+              <SpotCard key={s.id} spot={s} place={i + 1} />
             ))}
           </div>
-          {topSpots.length > 0 && (
+          {ended.length > 0 && (
             <div className="mt-8">
-              <SectionTitle action={{ href: "/leaderboard?board=spots", label: "Spot rankings" }}>Most beloved spots</SectionTitle>
+              <SectionTitle action={{ href: "/leaderboard?board=champions", label: "All champions" }}>Recently concluded</SectionTitle>
               <div className="grid gap-3">
-                {topSpots.map((s, i) => (
-                  <SpotCard key={s.id} spot={s} place={i + 1} />
-                ))}
-              </div>
-            </div>
-          )}
-          {tourneys.length > 0 && (
-            <div className="mt-8">
-              <SectionTitle action={{ href: "/tournament", label: "Run one" }}>Recent tournaments</SectionTitle>
-              <div className="grid gap-2">
-                {tourneys.map((t) => (
-                  <Link key={t.id} href={`/tournaments/${t.id}`} className="card flex items-center justify-between gap-3 px-4 py-3 hover:-translate-y-0.5 transition">
-                    <div className="min-w-0">
-                      <div className="truncate font-bold">🏯 {t.name}</div>
-                      <div className="truncate text-sm text-ink-soft">
-                        {t.size} wings · hosted by {t.userName}
-                      </div>
-                    </div>
-                    {t.championName && (
-                      <div className="shrink-0 text-right text-sm">
-                        <div className="text-ink-soft">Champion</div>
-                        <div className="font-bold">👑 {t.championName}</div>
-                      </div>
-                    )}
-                  </Link>
+                {ended.slice(0, 3).map((w) => (
+                  <WarCard key={w.id} war={w} now={now} viewerId={user?.id} />
                 ))}
               </div>
             </div>

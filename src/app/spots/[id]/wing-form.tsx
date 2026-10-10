@@ -9,22 +9,35 @@ import { HEAT_LABELS } from "@/lib/scoring";
 /** Must match NEW_TYPE in actions.ts. */
 const NEW_TYPE = "__new";
 
-export function WingForm({ spotId, types }: { spotId: string; types: { id: string; name: string; emoji: string }[] }) {
+type TypeOption = { id: string; name: string; emoji: string };
+
+/**
+ * Adds a wing to a spot. Inside a war, pass `warId` (to come back to the
+ * battleground afterwards) and `fixedType` when the war only counts one type.
+ */
+export function WingForm({ spotId, types, warId, fixedType }: { spotId: string; types: TypeOption[]; warId?: string; fixedType?: TypeOption | null }) {
   const [state, action] = useActionState<FormState, FormData>(createWing, null);
   const [heat, setHeat] = useState(2);
   const [style, setStyle] = useState<"bone-in" | "boneless">("bone-in");
   const [name, setName] = useState("");
-  const [typeId, setTypeId] = useState("");
+  const [typeId, setTypeId] = useState(fixedType?.id ?? "");
   const fe = state?.fieldErrors ?? {};
   return (
     <form action={action} className="grid gap-5">
       <input type="hidden" name="spotId" value={spotId} />
+      {warId && <input type="hidden" name="warId" value={warId} />}
       <div className="flex justify-center">
         <WingSpirit seed={`${spotId}-${name || "new"}`} heat={heat} style={style} size={110} className="animate-bob" />
       </div>
       <Field label="Flavor / name" error={fe.name}>
         <input name="name" required maxLength={80} className="field" placeholder="Honey Garlic" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
+      {fixedType ? (
+        <p className="text-sm">
+          <input type="hidden" name="wingTypeId" value={fixedType.id} />
+          Wing type: <b>{fixedType.emoji} {fixedType.name}</b> <span className="text-ink-soft">(this war only counts {fixedType.name})</span>
+        </p>
+      ) : (
       <Field label="Wing type" error={fe.wingTypeId} hint="So it can be compared with the same type at other spots.">
         <select name="wingTypeId" required className="field" value={typeId} onChange={(e) => setTypeId(e.target.value)}>
           <option value="">— Choose a type —</option>
@@ -36,6 +49,7 @@ export function WingForm({ spotId, types }: { spotId: string; types: { id: strin
           <option value={NEW_TYPE}>➕ Something new…</option>
         </select>
       </Field>
+      )}
       {typeId === NEW_TYPE && (
         <Field label="New wing type" error={fe.newType}>
           <input name="newType" maxLength={40} className="field" placeholder="Maple Bourbon" autoFocus />

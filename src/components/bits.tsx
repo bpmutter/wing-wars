@@ -1,11 +1,12 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { rankFor, type RankKind } from "@/lib/ranks";
+import { timeLeft } from "@/lib/wars";
 import { HEAT_LABELS } from "@/lib/scoring";
-import { signed } from "@/lib/format";
 
-export function RankBadge({ elo, kind = "wing", className = "" }: { elo: number; kind?: RankKind; className?: string }) {
-  const rank = rankFor(elo, kind);
+export function RankBadge({ score, kind = "wing", className = "" }: { score: number | null; kind?: RankKind; className?: string }) {
+  if (score === null) return <span className={`chip ${className}`}>{kind === "spot" ? "🏮 Unreviewed" : "✦ Untasted"}</span>;
+  const rank = rankFor(score, kind);
   return (
     <span className={`chip bg-honey/25! border-honey/60! text-ink! ${className}`} title={rank.blurb}>
       {kind === "spot" ? "🏮" : "✦"} {rank.title}
@@ -20,11 +21,6 @@ export function HeatPips({ heat }: { heat: number }) {
       <span className="sr-only">{HEAT_LABELS[heat]}</span>
     </span>
   );
-}
-
-export function EloDelta({ delta }: { delta: number }) {
-  const tone = delta > 0 ? "text-moss" : delta < 0 ? "text-ember" : "text-ink-soft";
-  return <span className={`font-bold tabular-nums ${tone}`}>{signed(delta)}</span>;
 }
 
 export function PageHeader({ eyebrow, title, children }: { eyebrow?: string; title: ReactNode; children?: ReactNode }) {
@@ -111,23 +107,6 @@ export function TypeChip({ type }: { type: { typeId: string | null; typeName: st
   );
 }
 
-/** One row of a side-by-side score comparison. */
-export function TapeRow({ label, a, b, max, bold }: { label: string; a: number; b: number; max: number; bold?: boolean }) {
-  return (
-    <div className={`grid grid-cols-[2.5rem_1fr_6.5rem_1fr_2.5rem] items-center gap-2 ${bold ? "border-t border-line pt-4" : ""}`}>
-      <span className={`text-right tabular-nums ${a > b ? "font-bold text-sauce" : ""} ${bold ? "font-display text-xl" : ""}`}>{a}</span>
-      <div className="flex h-3 justify-end overflow-hidden rounded-full bg-paper-2">
-        <div className="rounded-full bg-sauce" style={{ width: `${(a / max) * 100}%` }} />
-      </div>
-      <span className={`text-center text-sm ${bold ? "font-bold uppercase tracking-wider" : "font-bold"}`}>{label}</span>
-      <div className="flex h-3 overflow-hidden rounded-full bg-paper-2">
-        <div className="rounded-full bg-moss" style={{ width: `${(b / max) * 100}%` }} />
-      </div>
-      <span className={`tabular-nums ${b > a ? "font-bold text-moss" : ""} ${bold ? "font-display text-xl" : ""}`}>{b}</span>
-    </div>
-  );
-}
-
 /** Pill-style tab links. */
 export function Tabs({ tabs, active }: { tabs: { key: string; label: string; href: string }[]; active: string }) {
   return (
@@ -138,5 +117,26 @@ export function Tabs({ tabs, active }: { tabs: { key: string; label: string; hre
         </Link>
       ))}
     </div>
+  );
+}
+
+/** A soft progress bar, like a path through the hills. */
+export function Progress({ value, label }: { value: number; label?: string }) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  return (
+    <div>
+      <div className="h-3 overflow-hidden rounded-full border border-line bg-paper-2" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+        <div className="h-full rounded-full bg-gradient-to-r from-meadow to-moss transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+export function WarStatus({ ended, endsAt, now }: { ended: boolean; endsAt: Date | null; now: Date }) {
+  if (ended) return <span className="chip bg-ink/10! text-ink!">🏁 Concluded</span>;
+  return (
+    <span className="chip bg-sauce/15! border-sauce/40! text-ink!">
+      ⚔️ Raging{endsAt && <> · {timeLeft(endsAt, now)}</>}
+    </span>
   );
 }

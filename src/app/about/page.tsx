@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/bits";
+import { SpotSpirit } from "@/components/spot-spirit";
 import { WingSpirit } from "@/components/wing-spirit";
-import { K_FACTOR, STARTING_ELO } from "@/lib/elo";
 import { RANKS, SPOT_RANKS } from "@/lib/ranks";
-import { ELEMENTS, HEAT_LABELS, SPOT_ELEMENTS } from "@/lib/scoring";
+import { ELEMENTS, HEAT_LABELS, MAX_TOTAL, SPOT_ELEMENTS } from "@/lib/scoring";
+import { PRIOR_WEIGHT } from "@/lib/war-results";
 
 export const metadata: Metadata = { title: "How it works" };
 
@@ -12,95 +13,126 @@ export default function AboutPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
       <PageHeader eyebrow="📜 The scroll of rules" title="How Wing Wars works">
-        A small, cozy guide to a very serious competition.
+        A small, cozy guide to a very serious campaign.
       </PageHeader>
 
       <div className="grid gap-6">
         <section className="card p-6">
-          <h2 className="text-2xl font-semibold">⚔️ Wing battles</h2>
+          <h2 className="text-2xl font-semibold">🏯 Wars</h2>
           <p className="mt-2">
-            A battle is two wings, eaten side by side, judged by one person. You score each wing on the five elements
-            and declare a victor. Usually that&apos;s the one with the higher score — but you can overrule your own
-            scorecard if your heart says otherwise.
+            A <b>war</b> is a long-running campaign across the restaurants in your town. Someone declares it, picks
+            the <b>battlegrounds</b> (each restaurant is one battle in the war), optionally limits it to one wing type
+            — a Buffalo War, say — and sets an end date. Anyone can join by opening the war&apos;s link. Members can add
+            more battlegrounds while it rages.
+          </p>
+          <p className="mt-3">
+            Over the following days or weeks, every judge visits as many battlegrounds as they can and files a
+            scorecard for each wing they eat. You can update your scorecards until the war ends.
           </p>
         </section>
 
         <section className="card p-6">
-          <h2 className="text-2xl font-semibold">🍃 The five elements</h2>
+          <h2 className="text-2xl font-semibold">🌫️ Fog of war</h2>
+          <p className="mt-2">
+            By default the standings stay hidden until the war ends, so nobody is swayed by the scoreboard and
+            everyone gets the grand reveal together. The host can turn the fog off for a live scoreboard instead.
+            A war ends on its end date, or when the host ends it early.
+          </p>
+        </section>
+
+        <section className="card p-6">
+          <h2 className="text-2xl font-semibold">👑 How the champion is decided</h2>
+          <ol className="mt-3 grid list-decimal gap-2 pl-5">
+            <li>Each wing scorecard gets a total out of {MAX_TOTAL} (five elements × 10).</li>
+            <li>
+              At each battleground, a judge&apos;s scorecards are averaged into <b>one vote</b> — eating three flavors
+              doesn&apos;t give you three votes.
+            </li>
+            <li>
+              Each battleground&apos;s votes are averaged, then blended with {PRIOR_WEIGHT} imaginary average judges.
+              A spot that only one person visited is pulled toward the middle; a spot five people loved mostly
+              speaks for itself. This is what stops a single rave review from winning a war.
+            </li>
+            <li>The highest score wins the war.</li>
+          </ol>
+          <p className="mt-3 text-sm text-ink-soft">
+            Honors are handed out too: <b>Wing of the War</b>, the best wing at each of the five elements, the{" "}
+            <b>Best Hangout</b> (from the optional restaurant reviews), the <b>Most Devoted</b> judge, plus{" "}
+            <b>The Oracle</b> (whose personal ranking matched the final result best) and <b>The Contrarian</b> (who
+            matched it least).
+          </p>
+        </section>
+
+        <section className="card p-6">
+          <h2 className="text-2xl font-semibold">🍃 The five elements (wings)</h2>
           <ul className="mt-3 grid gap-2">
             {ELEMENTS.map((e) => (
               <li key={e.key}>
-                <b>{e.icon} {e.label}</b> — <span className="text-ink-soft">{e.hint}</span>
+                <b>
+                  {e.icon} {e.label}
+                </b>{" "}
+                — <span className="text-ink-soft">{e.hint}</span>
               </li>
             ))}
           </ul>
           <p className="mt-3 text-sm text-ink-soft">
             Each is scored 1–10. Separately, every wing has an <i>advertised</i> heat level from 0 to 5 (
-            {HEAT_LABELS.join(" → ")}), which is how spicy the spot claims it is. The Heat element is how <i>good</i>{" "}
-            the heat is.
+            {HEAT_LABELS.join(" → ")}). The Heat element is how <i>good</i> the heat is.
           </p>
         </section>
 
         <section className="card p-6">
-          <h2 className="text-2xl font-semibold">🍃 Wing types</h2>
+          <h2 className="text-2xl font-semibold">🏮 The five virtues (restaurants)</h2>
           <p className="mt-2">
-            Every wing belongs to a <b>type</b>: Buffalo, Lemon Pepper, Garlic Parmesan, Asian Glaze and so on (you can
-            add new ones). Each type has its own leaderboard, so you can find the best Buffalo in town, and you can
-            run same-type showdowns. Types are also ranked against each other by their record in battles between
-            <i> different</i> types — the eternal Buffalo vs. Lemon Pepper question, settled by data.
-          </p>
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-2xl font-semibold">🏮 Judging spots</h2>
-          <p className="mt-2">
-            Restaurants are judged too, separately from their wings. A <b>spot showdown</b> pits two spots against each
-            other on the whole visit, and you can leave a solo <b>review</b> on any spot&apos;s page. Spots are scored on
-            the five virtues:
+            You can also review a restaurant as a whole — in a war (where it decides the Best Hangout) or any time
+            from its page:
           </p>
           <ul className="mt-3 grid gap-2">
             {SPOT_ELEMENTS.map((e) => (
               <li key={e.key}>
-                <b>{e.icon} {e.label}</b> — <span className="text-ink-soft">{e.hint}</span>
+                <b>
+                  {e.icon} {e.label}
+                </b>{" "}
+                — <span className="text-ink-soft">{e.hint}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-3 text-sm text-ink-soft">
-            Spots have their own rating and ranks, from {SPOT_RANKS[0].title} to {SPOT_RANKS[SPOT_RANKS.length - 1].title}. A
-            spot can serve the best wing in town and still lose a showdown if the service is grim.
-          </p>
         </section>
 
         <section className="card p-6">
-          <h2 className="text-2xl font-semibold">📈 Ratings</h2>
+          <h2 className="text-2xl font-semibold">🏆 Hall of Fame & solo reviews</h2>
           <p className="mt-2">
-            Every wing starts at <b>{STARTING_ELO}</b> and moves using the Elo system (K = {K_FACTOR}), the same idea
-            chess uses — wings and spots each have their own. Beating a stronger rival earns a lot; beating a weaker one earns a little. Ratings are shared
-            by everyone, so the leaderboard is the collective wisdom of every judge.
+            Not every wing needs a war. You can review any wing or restaurant on its own page, any time. Every
+            scorecard — war or solo — feeds the Hall of Fame, where wings, spots and wing types are ranked by their
+            adjusted average. Averages earn titles:
           </p>
-          <ol className="mt-4 grid gap-1 text-sm">
-            {RANKS.map((r) => (
-              <li key={r.title}>
-                <b>✦ {r.title}</b> <span className="text-ink-soft">({Number.isFinite(r.min) ? `${r.min}+` : `below ${RANKS[1].min}`}) — {r.blurb}</span>
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-2xl font-semibold">🏯 Tournaments</h2>
-          <p className="mt-2">
-            Got a wing night planned? Pick 4, 8 or 16 wings, seed them by rating or draw randomly, then tap the
-            winner of each match. When you save it, every match counts as a battle.
-          </p>
+          <div className="mt-3 grid gap-4 text-sm sm:grid-cols-2">
+            <ol className="grid gap-1">
+              {RANKS.map((r) => (
+                <li key={r.title}>
+                  <b>✦ {r.title}</b> <span className="text-ink-soft">({r.min}+)</span>
+                </li>
+              ))}
+            </ol>
+            <ol className="grid gap-1">
+              {SPOT_RANKS.map((r) => (
+                <li key={r.title}>
+                  <b>🏮 {r.title}</b> <span className="text-ink-soft">({r.min}+)</span>
+                </li>
+              ))}
+            </ol>
+          </div>
         </section>
 
         <section className="card flex items-center gap-4 p-6">
-          <WingSpirit seed="about-spirit" heat={3} size={80} className="animate-bob shrink-0" />
+          <WingSpirit seed="about-spirit" heat={3} size={72} className="animate-bob shrink-0" />
+          <SpotSpirit seed="about-lantern" size={72} className="animate-bob shrink-0" />
           <p>
-            Every wing gets its own little spirit, generated from its identity — crispy bits, sauce drips and all.
-            Hotter wings glow redder and grow flames. Champions wear a crown of leaves.{" "}
-            <Link className="link" href="/battle">Go start a battle →</Link>
+            Every wing gets its own little spirit and every restaurant its own lantern, generated from who they
+            are. Hotter wings glow redder and grow flames; champions wear crowns of leaves.{" "}
+            <Link className="link" href="/wars">
+              Go find a war →
+            </Link>
           </p>
         </section>
       </div>

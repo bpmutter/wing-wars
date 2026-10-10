@@ -1,10 +1,11 @@
 # 🍗 Wing Wars
 
-> *Two wings enter. One wing is crowned.*
+> *Declare war. Eat everywhere. Crown a champion.*
 
 Wing Wars is a cozy, vaguely Studio-Ghibli-flavored web app for settling the most important debate of all:
-**whose wings are best?** Pit chicken wings from different restaurants against each other, judge them on the
-five elements, and watch the rankings drift like clouds over the hills.
+**whose wings are best?** You start a **war**, a long-running campaign across the restaurants in your town.
+Friends join it, eat their way through every restaurant, and score what they find. When the war ends, the
+results are tallied and a champion is crowned.
 
 Built with Next.js 16 (App Router, Cache Components), Tailwind CSS 4, Better Auth and Drizzle ORM on
 SQLite/libSQL. It runs entirely locally with zero config, and is designed to deploy to Vercel with a free Turso
@@ -14,24 +15,40 @@ database.
 
 ## The concept
 
-### 🏮 Spots, wings & wing types
-The data model has three layers:
+### 🏯 Wars
+A **war** is the heart of the app.
 
-- A **spot** is any restaurant, bar or shack that serves wings.
-- A **wing type** is a canonical kind of wing (*Buffalo*, *Lemon Pepper*, *Garlic Parmesan*, *Asian Glaze*,
-  *Nashville Hot*… 13 to start, and people can add more).
-- A **wing** is one specific offering: a spot's take on a type, e.g. *Hilltop Hot* (a Buffalo wing at Windmill
-  Hill Wing Shack). It has a style (bone-in/boneless) and an advertised heat level from 0 (*No heat*) to 5
-  (*Volcanic*).
+1. **Someone declares a war.** They pick the **battlegrounds** (restaurants), choose whether every wing counts
+   or only one type (*"The Spring Buffalo War"*), and set an optional end date.
+2. **People join** by opening the war's link. There are no teams; every member is a judge.
+3. **Each restaurant is a battle.** At each battleground, a judge scores every wing they eat on the five elements.
+   They can update their scores until the war ends, and can also optionally review the restaurant itself.
+   Members can add more battlegrounds while the war is on, including brand-new spots.
+4. **The fog of war** (on by default) hides the standings until the end, so nobody's swayed by the scoreboard
+   and everyone gets the reveal together. Hosts can turn it off for a live scoreboard.
+5. **The war ends** on its end date, or when the host ends it early. Then the champion is revealed.
 
-Wings and spots are **judged separately**, and each has its own rating, ranks and leaderboard.
+### 👑 How the winner is computed
+All of this lives in `src/lib/war-results.ts` (pure and unit tested):
 
-Every wing gets its own **wing spirit**: a little procedurally generated forest creature (drumstick or nugget,
-depending on style). Its color comes from the heat level, and its face, crispy bits and sauce drips come from
-the wing's ID. Hot wings grow flames, champions wear crowns of leaves, and losers look a bit dazed.
+- Each scorecard totals the five elements (out of 50).
+- At each battleground, a judge's scorecards are **averaged into one vote**. Eating three flavors doesn't give
+  you three votes.
+- Each battleground's votes are averaged and then **blended with 3 imaginary average judges** (a Bayesian
+  average). A spot that only one person visited gets pulled toward the middle; one that five people loved
+  mostly speaks for itself. This stops a single rave review from winning a war.
+- The highest score wins.
 
-### ⚔️ Battles
-The core loop. Eat two wings side by side, then score **each** on the **five elements** (1–10):
+The reveal also hands out honors:
+
+- **Wing of the War**, plus the best wing at each of the five elements (Best Crisp, Best Sauce, …).
+- **Best Hangout**, from the optional restaurant reviews.
+- **Most Devoted**, the judge who covered the most ground.
+- **The Oracle** and **The Contrarian**: the judges whose personal rankings matched the final standings best
+  and worst (Spearman correlation).
+
+### 🍃 The five elements
+Wings are scored 1–10 on each:
 
 | | Element | What it means |
 |---|---|---|
@@ -41,50 +58,22 @@ The core loop. Eat two wings side by side, then score **each** on the **five ele
 | 🔥 | **Heat** | How *good* the burn is (not just how hot) |
 | 🪙 | **Value** | Worth the coin? |
 
-The winner defaults to the higher total, but you can overrule your own scorecard (a "heart-over-head
-verdict"). Every battle gets a **battle report** with a tale-of-the-tape comparison, an overlaid flavor-radar
-chart, rating changes, the all-time head-to-head record, and a little shower of falling leaves.
+Restaurants have their own **five virtues**: Wing Game, Sides & Dips, Vibe, Service and Value.
 
-### 🏮 Judging spots
-Restaurants get judged on the whole visit, not just one wing. A **spot showdown** pits two spots head to head,
-and you can leave a solo **review** on any spot's page. Spots are scored on the **five virtues** (1–10):
+### 🏮 Spots, wings & wing types
+- A **spot** is any restaurant, bar or shack that serves wings. Each one is drawn as its own paper-lantern spirit.
+- A **wing type** is a canonical kind of wing: Buffalo, Lemon Pepper, Garlic Parmesan, Asian Glaze, Nashville
+  Hot and so on. There are 13 to start, and people can add more.
+- A **wing** is one spot's take on a type, e.g. *Hilltop Hot* (a Buffalo wing at Windmill Hill Wing Shack).
+  Every wing gets a procedurally generated forest-spirit face. Hotter wings glow redder and grow flames.
 
-| | Virtue | What it means |
-|---|---|---|
-| 🍗 | **Wing Game** | How good is the wing menu overall? |
-| 🥣 | **Sides & Dips** | Ranch, blue cheese, fries, celery |
-| 🏮 | **Vibe** | Cozy? Lively? Somewhere you'd linger? |
-| 🙇 | **Service** | Friendly, quick, napkins on hand |
-| 🪙 | **Value** | Worth the coin? |
+### 🏆 Hall of Fame & solo reviews
+Not everything needs a war. You can review any wing or restaurant on its own page at any time. Every scorecard,
+war or solo, feeds the **Hall of Fame**, which ranks wings, spots, wing types and past war champions. It uses
+the same adjusted averages, so one 10/10 can't top the hill. Averages also earn titles:
 
-Every spot is drawn as its own paper-lantern spirit. A spot can serve the best wing in town and still lose a
-showdown if the service is grim.
-
-### 🍃 Wing types
-Each type has its own leaderboard ("the best Buffalo in the land"). You can run **same-type showdowns**: the
-battle form and the tournament picker can both filter by type. Types are also ranked **against each other** by
-their record in battles between *different* types, which settles the Buffalo vs. Lemon Pepper question. Same-type
-battles crown the best wing within a type but don't count toward the cross-type standings.
-
-### 📈 Ratings & ranks
-Wings and spots each carry a shared **Elo rating**: they start at 1200 with K = 32. Beating a stronger rival
-earns a lot, and losing to an underdog costs a lot. Ratings map to ranks:
-
-- Wings: `Lost Crumb → Dust Sprite → Meadow Wanderer → Hilltop Hero → Sky Captain → Forest Guardian → Great Sauce Spirit`
-- Spots: `Abandoned Shack → Roadside Stall → Village Tavern → Hilltop Inn → Famous Teahouse → Grand Festival Hall → Legendary Bathhouse`
-
-The **leaderboard** has three tabs: wings and spots (top three on a podium of rolling hills) and wing types
-(a cross-type standings table). It also lists the most devoted judges.
-
-### 🏯 Tournaments
-For wing nights. Pick 4, 8 or 16 wings, seed them by rating (1v8, 4v5, …) or draw at random, then tap the
-winner of each match through the bracket. Saving it records every match as a battle, so ratings move. The
-server replays the bracket itself to check it, so nobody can sneak a wing into the final.
-
-### 📓 Tastings & judges
-You can also log a **solo tasting** (one scorecard, no opponent). It feeds the wing's average flavor profile
-but doesn't touch its Elo. Every user has a **judge page** with a title (*Apprentice Taster → Elder of the
-Fryer*), their battles, their tasting journal and their highest-scored wing.
+- Wings: *Lost Crumb → Dust Sprite → Meadow Wanderer → Hilltop Hero → Sky Captain → Forest Guardian → Great Sauce Spirit*
+- Spots: *Abandoned Shack → … → Legendary Bathhouse*
 
 ---
 
@@ -100,8 +89,12 @@ npm run dev
 Then open http://localhost:3000.
 
 That's it. `npm run dev` runs a `predev` step that creates `local.db` (SQLite), applies the migrations and,
-if the database is empty, seeds a small demo world: 7 spots, 20 wings across 13 wing types, 4 judges, about a
-month of wing battles and spot showdowns, and one tournament.
+if the database is empty, seeds a small demo world: 7 spots, 22 wings across 13 wing types, 6 judges, and
+three wars:
+
+- **The Harvest Moon Wing War**: concluded, so you can see a full results reveal.
+- **The Spring Buffalo War**: Buffalo only, under fog of war. The demo judge is a member, partway through.
+- **The Lantern Festival Skirmish**: fog off, with a live scoreboard. The demo judge hasn't joined it yet.
 
 **Demo login:** `demo@wingwars.local` / `wingwars`. You can also create your own account on the sign-in page
 (email + password, stored locally).
@@ -113,8 +106,8 @@ month of wing battles and spot showdowns, and one tournament.
 | `npm run dev` | Prepare the local DB (migrate + seed if empty), then start Next.js |
 | `npm run build` / `npm start` | Production build / server |
 | `npm run vercel-build` | Applies migrations to the configured DB, then builds (Vercel runs this automatically) |
-| `npm test` | Unit tests (Vitest): Elo, ranks, scoring and bracket logic |
-| `npx playwright test` | End-to-end smoke test: sign up → wing battle → add spot + wing (with a new wing type) → tasting → spot review → spot showdown → tournament |
+| `npm test` | Unit tests (Vitest): war results, scoring and the Bayesian averages |
+| `npx playwright test` | End-to-end smoke test: sign up → declare a war → score wings at a battleground → review the restaurant → add a new spot + wing mid-war → end the war → results → join another war → solo review → Hall of Fame |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run db:generate` | Generate a new migration after editing `src/db/schema.ts` |
 | `npm run db:migrate` | Apply migrations to whatever DB the env points at |
@@ -141,26 +134,29 @@ everything.
 
 ```
 src/
-  app/                 routes (App Router)
-    page.tsx           home: hero, reigning champion, recent battles, top wings
-    battle/            the battle scorecard form (wing vs wing, or spot vs spot)
-    battles/[id]/      wing battle report
-    spot-battles/[id]/ spot showdown report
-    types/             wing types: cross-type standings + per-type leaderboards
-    leaderboard/       podium + rankings
-    spots/, wings/     browse, detail pages, add forms
-    tournament/        bracket runner (client) ▸ tournaments/[id] results
-    judges/[id]/       user profile / journal
-    sign-in/           email+password (and optional GitHub) auth
-    actions.ts         all server actions (validated with zod)
-    api/auth/[...all]  Better Auth handler
-  components/          wing-spirit, spot-spirit, scenery, radar chart, bracket view, cards…
-  db/                  Drizzle schema + client (local file or Turso)
-  lib/                 auth, session, queries, Elo, ranks, scoring, bracket logic
-scripts/               setup-local (migrate + seed), migrate, seed, reset
-                       (both migrate paths also insert any missing canonical wing types)
-drizzle/               SQL migrations
-tests/                 unit (vitest) + e2e (playwright)
+  app/                       routes (App Router)
+    page.tsx                 home: latest champion, raging wars, top wings & spots
+    wars/                    list of wars ▸ new/ (declare a war)
+    wars/[id]/               war overview: join, progress, battlegrounds, judges, fog / results reveal
+    wars/[id]/spots/[spotId] a battleground: score the wings there, review the restaurant
+    leaderboard/             Hall of Fame (wings, spots, wing types, war champions)
+    spots/, wings/, types/   browse, detail pages, add forms, solo reviews
+    judges/[id]/             user profile: wars, tasting journal, reviews
+    sign-in/                 email+password (and optional GitHub) auth
+    actions.ts               all server actions (validated with zod)
+    api/auth/[...all]        Better Auth handler
+  components/                wing-spirit, spot-spirit, scenery, podium, radar chart, cards…
+  db/                        Drizzle schema + client (local file or Turso)
+  lib/
+    war-results.ts           how a war is decided (pure, unit tested)
+    wars.ts                  war lifecycle helpers (ended? results visible?)
+    queries.ts               all reads
+    scoring.ts, ranks.ts     the five elements/virtues and the title ladders
+    auth.ts, session.ts      Better Auth setup and helpers
+scripts/                     setup-local (migrate + seed), migrate, seed, reset
+                             (both migrate paths also insert any missing canonical wing types)
+drizzle/                     SQL migrations
+tests/                       unit (vitest) + e2e (playwright)
 ```
 
 ## Deploying

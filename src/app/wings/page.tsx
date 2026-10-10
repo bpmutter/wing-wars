@@ -8,7 +8,7 @@ import { listWings, wingTypeOptions } from "@/lib/queries";
 export const metadata: Metadata = { title: "All wings" };
 
 const SORTS = [
-  { key: "elo", label: "Top rated" },
+  { key: "top", label: "Top rated" },
   { key: "tasted", label: "Most tasted" },
   { key: "new", label: "Newest" },
 ] as const;
@@ -16,13 +16,13 @@ const SORTS = [
 export default async function WingsPage({ searchParams }: PageProps<"/wings">) {
   await connection();
   const { sort: raw, type: rawType } = await searchParams;
-  const sort = SORTS.find((s) => s.key === raw)?.key ?? "elo";
+  const sort = SORTS.find((s) => s.key === raw)?.key ?? "top";
   const types = await wingTypeOptions();
   const type = types.find((t) => t.id === rawType);
   const wings = await listWings({ sort, typeId: type?.id });
   const href = (q: { sort?: string; type?: string }) => {
     const p = new URLSearchParams();
-    if ((q.sort ?? sort) !== "elo") p.set("sort", q.sort ?? sort);
+    if ((q.sort ?? sort) !== "top") p.set("sort", q.sort ?? sort);
     const t = "type" in q ? q.type : type?.id;
     if (t) p.set("type", t);
     const s = p.toString();

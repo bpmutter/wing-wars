@@ -4,11 +4,10 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { EmptyState, HeatPips, LeafShower, RankBadge, SectionTitle, StatPill, TypeChip } from "@/components/bits";
-import { BattleCard } from "@/components/cards";
 import { Radar } from "@/components/radar";
 import { WingSpirit } from "@/components/wing-spirit";
-import { timeAgo, winRate } from "@/lib/format";
-import { getWing, recentBattles, wingTypeOptions } from "@/lib/queries";
+import { timeAgo } from "@/lib/format";
+import { getWing, wingTypeOptions } from "@/lib/queries";
 import { nextRank as nextRankFor, rankFor } from "@/lib/ranks";
 import { ELEMENTS, MAX_TOTAL, total } from "@/lib/scoring";
 import { getCurrentUser } from "@/lib/session";
@@ -23,12 +22,12 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
   const sp = await searchParams;
   const data = await getWing(id);
   if (!data) notFound();
-  const { wing, spot, type, tastings, averages, place, typePlace } = data;
-  const battles = await recentBattles({ wingId: id, limit: 10 });
+  const { wing, spot, type, tastings, averages, place, typePlace, avgTotal } = data;
   const now = new Date();
-  const rank = rankFor(wing.elo);
-  const nextRank = nextRankFor(wing.elo);
-  const rate = winRate(wing.wins, wing.losses);
+  const rank = avgTotal !== null ? rankFor(avgTotal) : null;
+  const nextRank = avgTotal !== null ? nextRankFor(avgTotal) : null;
+  const warCount = new Set(tastings.filter((t) => t.tasting.warId).map((t) => t.tasting.warId)).size;
+  const judgeCount = new Set(tastings.map((t) => t.tasting.userId)).size;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10">
@@ -39,7 +38,8 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
         </div>
         <div>
           <p className="text-sm font-bold uppercase tracking-[0.18em] text-sauce">
-            #{place} in the land{type && typePlace && <> · #{typePlace} {type.name}</>} · {wing.style}
+            {place ? <>#{place} in the land</> : "Not yet ranked"}
+            {type && typePlace && <> · #{typePlace} {type.name}</>} · {wing.style}
           </p>
           <h1 className="mt-1 text-4xl font-semibold sm:text-5xl">{wing.name}</h1>
           <p className="mt-1 text-lg text-ink-soft">
@@ -47,7 +47,7 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
             {spot.neighborhood && <> · {spot.neighborhood}</>}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <RankBadge elo={wing.elo} />
+            <RankBadge score={avgTotal} />
             {type ? (
               <Link href={`/types/${type.id}`}>
                 <TypeChip type={{ typeId: type.id, typeName: type.name, typeEmoji: type.emoji }} />
@@ -63,20 +63,19 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
             </Suspense>
           )}
           {wing.description && <p className="mt-4 max-w-xl">{wing.description}</p>}
-          <p className="mt-3 text-sm italic text-ink-soft">
-            “{rank.blurb}”{nextRank && <> — {nextRank.min - wing.elo} points from {nextRank.title}.</>}
-          </p>
+          {rank && (
+            <p className="mt-3 text-sm italic text-ink-soft">
+              “{rank.blurb}”{nextRank && avgTotal !== null && <> — {(nextRank.min - avgTotal).toFixed(1)} points from {nextRank.title}.</>}
+            </p>
+          )}
           <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatPill label="Rating" value={wing.elo} />
-            <StatPill label="Record" value={`${wing.wins}–${wing.losses}`} />
-            <StatPill label="Win rate" value={rate === null ? "—" : `${rate}%`} />
-            <StatPill label="Avg score" value={averages ? `${total(averages).toFixed(1)}` : "—"} />
+            <StatPill label="Avg score" value={avgTotal !== null ? `${avgTotal.toFixed(1)}/${MAX_TOTAL}` : "—"} />
+            <StatPill label="Scorecards" value={tastings.length} />
+            <StatPill label="Judges" value={judgeCount} />
+            <StatPill label="Wars fought" value={warCount} />
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
-            <Link href={`/battle?a=${wing.id}`} className="btn btn-primary">
-              ⚔️ Challenge this wing
-            </Link>
-            <a href="#taste" className="btn btn-secondary">📓 Log a tasting</a>
+            <a href="#taste" className="btn btn-primary">📓 Review this wing</a>
           </div>
         </div>
       </section>
@@ -104,7 +103,8 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
           )}
 
           <div id="taste" className="mt-10 scroll-mt-24">
-            <SectionTitle>Log a tasting</SectionTitle>
+            <SectionTitle>Review this wing</SectionTitle>
+            <p className="-mt-2 mb-4 text-sm text-ink-soft">A solo review, outside any war. It counts toward this wing&apos;s average and the Hall of Fame.</p>
             <div className="card p-6">
               <Suspense fallback={<div className="h-64 animate-pulse" />}>
                 <TastingGate wingId={wing.id} wingName={wing.name} />
@@ -114,38 +114,45 @@ export default async function WingPage({ params, searchParams }: PageProps<"/win
         </section>
 
         <section>
-          <SectionTitle>Battle history</SectionTitle>
-          {battles.length === 0 ? (
-            <EmptyState title="Untested in battle" action={{ href: `/battle?a=${wing.id}`, label: "Send it to battle" }} />
+          <SectionTitle>Scorecards</SectionTitle>
+          {tastings.length === 0 ? (
+            <EmptyState title="Untasted" action={{ href: "/wars", label: "Bring it into a war" }}>
+              Nobody has scored this wing yet. Review it below, or add its spot to a war.
+            </EmptyState>
           ) : (
-            <div className="grid gap-3">
-              {battles.map((b) => (
-                <BattleCard key={b.id} battle={b} now={now} />
-              ))}
-            </div>
-          )}
-
-          <div className="mt-10">
-            <SectionTitle>Tasting notes</SectionTitle>
-            {tastings.filter((t) => t.tasting.notes).length === 0 ? (
-              <p className="text-ink-soft">No notes yet — the journal pages are blank.</p>
-            ) : (
-              <ul className="grid gap-3">
-                {tastings
-                  .filter((t) => t.tasting.notes)
-                  .slice(0, 12)
-                  .map(({ tasting, userName }) => (
-                    <li key={tasting.id} className="card p-4">
-                      <p className="italic">“{tasting.notes}”</p>
-                      <p className="mt-2 text-xs text-ink-soft">
-                        <Link href={`/judges/${tasting.userId}`} className="link">{userName}</Link> · {total(tasting)}/{MAX_TOTAL} ·{" "}
+            <ul className="grid gap-3">
+              {tastings.slice(0, 20).map(({ tasting, userName, warName }) => (
+                <li key={tasting.id} className="card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link href={`/judges/${tasting.userId}`} className="link font-bold">
+                        {userName}
+                      </Link>
+                      <div className="text-xs text-ink-soft">
+                        {warName && tasting.warId ? (
+                          <>
+                            in{" "}
+                            <Link href={`/wars/${tasting.warId}`} className="link">
+                              {warName}
+                            </Link>{" "}
+                            ·{" "}
+                          </>
+                        ) : (
+                          "solo review · "
+                        )}
                         {timeAgo(tasting.createdAt, now)}
-                      </p>
-                    </li>
-                  ))}
-              </ul>
-            )}
-          </div>
+                      </div>
+                    </div>
+                    <div className="shrink-0 font-display text-xl font-semibold tabular-nums">
+                      {total(tasting)}
+                      <span className="text-xs text-ink-soft">/{MAX_TOTAL}</span>
+                    </div>
+                  </div>
+                  {tasting.notes && <p className="mt-2 italic">“{tasting.notes}”</p>}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
     </div>

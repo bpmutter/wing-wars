@@ -1,14 +1,12 @@
 /**
  * Seeds a fresh database with a cozy little world: spots, wings, judges,
- * a month of battles and one tournament. Deterministic, so every local
- * install gets the same story.
+ * one concluded war, two wars still raging, and some solo reviews.
+ * Deterministic, so every local install gets the same story.
  */
 import { hashPassword } from "better-auth/crypto";
 import { count } from "drizzle-orm";
 import type { Db } from "@/db/client";
-import { account, spotReviews, spots, tastings, tournaments, user, wingTypes, wings } from "@/db/schema";
-import { recordBattle, recordSpotBattle } from "@/lib/battle-engine";
-import { buildBracket, seedEntrants } from "@/lib/bracket";
+import { account, spotReviews, spots, tastings, user, warBattlegrounds, warMembers, wars, wingTypes, wings } from "@/db/schema";
 import { seeded } from "@/lib/hash";
 import type { Scores, SpotScores } from "@/lib/scoring";
 import { ensureWingTypes } from "@/lib/wing-types";
@@ -21,6 +19,8 @@ const JUDGES = [
   { id: "judge_moss", name: "Mossbeard", email: "mossbeard@wingwars.local" },
   { id: "judge_lu", name: "Lantern Lu", email: "lu@wingwars.local" },
   { id: "judge_cap", name: "Captain Drumstick", email: "captain@wingwars.local" },
+  { id: "judge_fern", name: "Fern", email: "fern@wingwars.local" },
+  { id: "judge_ember", name: "Old Ember", email: "ember@wingwars.local" },
 ];
 
 type SeedWing = { name: string; type: string; style: "bone-in" | "boneless"; heat: number; description: string; quality: number };
@@ -70,6 +70,7 @@ const SPOTS: { name: string; neighborhood: string; description: string; vibe: Se
     wings: [
       { name: "Applewood Smoked", type: "Dry Rub", style: "bone-in", heat: 1, description: "Four hours over applewood. Crisped on the grill to order.", quality: 8.4 },
       { name: "Carolina Gold", type: "BBQ", style: "bone-in", heat: 1, description: "Tangy mustard BBQ sauce, a little sweet, a lot of tang.", quality: 6.9 },
+      { name: "Smoked Buffalo", type: "Buffalo", style: "bone-in", heat: 2, description: "Smoked first, then fried and tossed in house buffalo. Controversial. Delicious.", quality: 8.0 },
       { name: "The Fire Demon", type: "Extreme Heat", style: "bone-in", heat: 5, description: "Ghost pepper and scorpion. Waiver required. Not joking.", quality: 5.8 },
     ],
   },
@@ -100,6 +101,7 @@ const SPOTS: { name: string; neighborhood: string; description: string; vibe: Se
     description: "A chrome diner next to the old airstrip. Pilots swear by the wings.",
     wings: [
       { name: "Sky Pirate BBQ", type: "BBQ", style: "bone-in", heat: 1, description: "Smoky molasses BBQ, charred at the edges.", quality: 6.6 },
+      { name: "Diner Buffalo", type: "Buffalo", style: "bone-in", heat: 2, description: "Classic diner-style buffalo with a side of crinkle fries.", quality: 6.8 },
       { name: "Lemon Pepper Dry", type: "Lemon Pepper", style: "bone-in", heat: 0, description: "Dry-tossed, extra pepper, a squeeze of lemon at the table.", quality: 7.0 },
       { name: "Volcano Island Jerk", type: "Jerk", style: "bone-in", heat: 4, description: "Allspice, scotch bonnet and lime. Grilled over charcoal.", quality: 8.1 },
     ],
@@ -125,6 +127,17 @@ function clamp(n: number) {
   return Math.max(1, Math.min(10, Math.round(n)));
 }
 
+const SPOT_NOTES = [
+  "The ranch alone is worth the trip.",
+  "Lovely spot, but we waited forty minutes for a refill.",
+  "Felt like eating inside a storybook.",
+  "Wings were great, the fries were a tragedy.",
+  "Friendliest staff in the land. They remembered my name.",
+  "A little pricey, but the lanterns, though.",
+  "",
+  "",
+];
+
 export async function seed(db: Db, { quiet = false } = {}) {
   const [{ n }] = await db.select({ n: count() }).from(spots);
   if (n > 0) {
@@ -136,13 +149,15 @@ export async function seed(db: Db, { quiet = false } = {}) {
   const typeIds = new Map((await db.select({ id: wingTypes.id, name: wingTypes.name }).from(wingTypes)).map((t) => [t.name, t.id]));
 
   const rand = seeded("wing-wars-seed");
+  const pick = <T,>(list: T[]) => list[Math.floor(rand() * list.length)];
   const now = Date.now();
   const DAY = 86_400_000;
+  const judge = (name: string) => JUDGES.find((j) => j.name === name)!.id;
 
   // Judges (all share the demo password, but only the demo one is advertised).
   const hash = await hashPassword(DEMO_PASSWORD);
   for (const j of JUDGES) {
-    const created = new Date(now - 40 * DAY);
+    const created = new Date(now - 60 * DAY);
     await db.insert(user).values({ ...j, emailVerified: true, createdAt: created, updatedAt: created });
     await db.insert(account).values({
       id: `acct_${j.id}`,
@@ -155,26 +170,28 @@ export async function seed(db: Db, { quiet = false } = {}) {
     });
   }
 
-  // Spots & wings
-  const roster: { id: string; quality: number; profile: Scores }[] = [];
-  const spotRoster: { id: string; profile: SpotScores }[] = [];
+  // Spots & wings, each with a hidden "true" flavor profile for believable scores.
+  type RosterWing = { id: string; spotId: string; type: string; profile: Scores };
+  const roster: RosterWing[] = [];
+  const spotRoster = new Map<string, { id: string; profile: SpotScores; wings: RosterWing[] }>();
   for (const s of SPOTS) {
     const [spot] = await db
       .insert(spots)
-      .values({ name: s.name, neighborhood: s.neighborhood, description: s.description, createdById: JUDGES[1 + Math.floor(rand() * 3)].id, createdAt: new Date(now - 35 * DAY) })
+      .values({ name: s.name, neighborhood: s.neighborhood, description: s.description, createdById: pick(JUDGES).id, createdAt: new Date(now - 50 * DAY) })
       .returning({ id: spots.id });
     const wingGame = s.wings.reduce((sum, w) => sum + w.quality, 0) / s.wings.length;
-    spotRoster.push({ id: spot.id, profile: { wingGame, ...s.vibe } });
+    const entry = { id: spot.id, profile: { wingGame, ...s.vibe }, wings: [] as RosterWing[] };
+    spotRoster.set(s.name, entry);
     for (const w of s.wings) {
       const [wing] = await db
         .insert(wings)
-        .values({ spotId: spot.id, name: w.name, wingTypeId: typeIds.get(w.type), style: w.style, heat: w.heat, description: w.description, createdById: JUDGES[1].id, createdAt: new Date(now - 34 * DAY) })
+        .values({ spotId: spot.id, name: w.name, wingTypeId: typeIds.get(w.type), style: w.style, heat: w.heat, description: w.description, createdById: pick(JUDGES).id, createdAt: new Date(now - 49 * DAY) })
         .returning({ id: wings.id });
-      // Each wing has a hidden "true" flavor profile around its quality.
       const q = w.quality;
-      roster.push({
+      const rw: RosterWing = {
         id: wing.id,
-        quality: q,
+        spotId: spot.id,
+        type: w.type,
         profile: {
           crisp: q + (rand() - 0.5) * 3,
           sauce: q + (rand() - 0.5) * 3,
@@ -182,138 +199,134 @@ export async function seed(db: Db, { quiet = false } = {}) {
           heat: w.heat >= 5 ? q - 1.5 : q + (rand() - 0.5) * 2,
           value: q + (rand() - 0.5) * 3,
         },
-      });
+      };
+      roster.push(rw);
+      entry.wings.push(rw);
     }
   }
 
-  const card = (w: (typeof roster)[number]): Scores => ({
-    crisp: clamp(w.profile.crisp + (rand() - 0.5) * 2.4),
-    sauce: clamp(w.profile.sauce + (rand() - 0.5) * 2.4),
-    juiciness: clamp(w.profile.juiciness + (rand() - 0.5) * 2.4),
-    heat: clamp(w.profile.heat + (rand() - 0.5) * 2.4),
-    value: clamp(w.profile.value + (rand() - 0.5) * 2.4),
+  const card = (w: RosterWing, mood: number): Scores => ({
+    crisp: clamp(w.profile.crisp + mood + (rand() - 0.5) * 2.4),
+    sauce: clamp(w.profile.sauce + mood + (rand() - 0.5) * 2.4),
+    juiciness: clamp(w.profile.juiciness + mood + (rand() - 0.5) * 2.4),
+    heat: clamp(w.profile.heat + mood + (rand() - 0.5) * 2.4),
+    value: clamp(w.profile.value + mood + (rand() - 0.5) * 2.4),
   });
-  const sum = (s: Scores) => s.crisp + s.sauce + s.juiciness + s.heat + s.value;
-
-  // A month of duels.
-  const BATTLES = 70;
-  for (let i = 0; i < BATTLES; i++) {
-    const ai = Math.floor(rand() * roster.length);
-    let bi = Math.floor(rand() * (roster.length - 1));
-    if (bi >= ai) bi++;
-    const a = roster[ai];
-    const b = roster[bi];
-    const scoresA = card(a);
-    const scoresB = card(b);
-    let aWins = sum(scoresA) === sum(scoresB) ? rand() < 0.5 : sum(scoresA) > sum(scoresB);
-    if (rand() < 0.06) aWins = !aWins; // the occasional heart-over-head verdict
-    const judge = JUDGES[Math.floor(rand() * JUDGES.length)];
-    const when = new Date(now - (30 - (i / BATTLES) * 30) * DAY - rand() * 6 * 3_600_000);
-    await db.transaction((tx) =>
-      recordBattle(tx, {
-        userId: judge.id,
-        wingAId: a.id,
-        wingBId: b.id,
-        winnerId: aWins ? a.id : b.id,
-        scoresA,
-        scoresB,
-        verdict: NOTES[Math.floor(rand() * NOTES.length)],
-        createdAt: when,
-      }),
-    );
-  }
-
-  // Some solo tastings with notes.
-  for (let i = 0; i < 25; i++) {
-    const w = roster[Math.floor(rand() * roster.length)];
-    await db.insert(tastings).values({
-      wingId: w.id,
-      userId: JUDGES[Math.floor(rand() * JUDGES.length)].id,
-      ...card(w),
-      notes: NOTES[Math.floor(rand() * (NOTES.length - 3))],
-      createdAt: new Date(now - rand() * 30 * DAY),
-    });
-  }
-
-  // Spot showdowns and reviews.
-  const spotCard = (s: (typeof spotRoster)[number]): SpotScores => ({
+  const spotCard = (s: { profile: SpotScores }): SpotScores => ({
     wingGame: clamp(s.profile.wingGame + (rand() - 0.5) * 2.4),
     sides: clamp(s.profile.sides + (rand() - 0.5) * 2.4),
     vibe: clamp(s.profile.vibe + (rand() - 0.5) * 2.4),
     service: clamp(s.profile.service + (rand() - 0.5) * 2.4),
     value: clamp(s.profile.value + (rand() - 0.5) * 2.4),
   });
-  const spotSum = (s: SpotScores) => s.wingGame + s.sides + s.vibe + s.service + s.value;
-  const SPOT_NOTES = [
-    "The ranch alone is worth the trip.",
-    "Lovely spot, but we waited forty minutes for a refill.",
-    "Felt like eating inside a storybook.",
-    "Wings were great, the fries were a tragedy.",
-    "Friendliest staff in the land. They remembered my name.",
-    "A little pricey, but the lanterns, though.",
-    "",
-    "",
-  ];
-  const SHOWDOWNS = 24;
-  for (let i = 0; i < SHOWDOWNS; i++) {
-    const ai = Math.floor(rand() * spotRoster.length);
-    let bi = Math.floor(rand() * (spotRoster.length - 1));
-    if (bi >= ai) bi++;
-    const a = spotRoster[ai];
-    const b = spotRoster[bi];
-    const scoresA = spotCard(a);
-    const scoresB = spotCard(b);
-    const aWins = spotSum(scoresA) === spotSum(scoresB) ? rand() < 0.5 : spotSum(scoresA) > spotSum(scoresB);
-    const when = new Date(now - (28 - (i / SHOWDOWNS) * 28) * DAY - rand() * 6 * 3_600_000);
-    await db.transaction((tx) =>
-      recordSpotBattle(tx, {
-        userId: JUDGES[Math.floor(rand() * JUDGES.length)].id,
-        spotAId: a.id,
-        spotBId: b.id,
-        winnerId: aWins ? a.id : b.id,
-        scoresA,
-        scoresB,
-        verdict: SPOT_NOTES[Math.floor(rand() * SPOT_NOTES.length)],
-        createdAt: when,
-      }),
-    );
-  }
-  for (let i = 0; i < 14; i++) {
-    const s = spotRoster[Math.floor(rand() * spotRoster.length)];
-    await db.insert(spotReviews).values({
-      spotId: s.id,
-      userId: JUDGES[Math.floor(rand() * JUDGES.length)].id,
-      ...spotCard(s),
-      notes: SPOT_NOTES[Math.floor(rand() * (SPOT_NOTES.length - 2))],
-      createdAt: new Date(now - rand() * 30 * DAY),
-    });
+  // Some judges are generous, some are harsh.
+  const mood = new Map(JUDGES.map((j) => [j.id, (rand() - 0.5) * 1.6]));
+
+  /**
+   * Creates a war and has its members eat their way through it.
+   * `coverage` is the chance a member has visited each battleground.
+   */
+  async function war(opts: {
+    name: string;
+    description: string;
+    host: string;
+    members: string[];
+    spotNames: string[];
+    type?: string;
+    fogOfWar: boolean;
+    startedDaysAgo: number;
+    endsInDays: number | null;
+    coverage: (memberId: string) => number;
+  }) {
+    const created = new Date(now - opts.startedDaysAgo * DAY);
+    const [w] = await db
+      .insert(wars)
+      .values({
+        name: opts.name,
+        description: opts.description,
+        hostId: judge(opts.host),
+        wingTypeId: opts.type ? typeIds.get(opts.type) : null,
+        fogOfWar: opts.fogOfWar,
+        endsAt: opts.endsInDays === null ? null : new Date(now + opts.endsInDays * DAY),
+        createdAt: created,
+      })
+      .returning({ id: wars.id });
+    const grounds = opts.spotNames.map((n) => spotRoster.get(n)!);
+    await db.insert(warBattlegrounds).values(grounds.map((g, i) => ({ warId: w.id, spotId: g.id, addedById: judge(opts.host), createdAt: new Date(created.getTime() + i * 1000) })));
+    const memberIds = opts.members.map(judge);
+    await db.insert(warMembers).values(memberIds.map((userId, i) => ({ warId: w.id, userId, joinedAt: new Date(created.getTime() + i * 3_600_000) })));
+
+    const span = Math.max(1, opts.startedDaysAgo - Math.max(0, -(opts.endsInDays ?? 0)));
+    for (const userId of memberIds) {
+      for (const g of grounds) {
+        if (rand() > opts.coverage(userId)) continue;
+        const eligible = opts.type ? g.wings.filter((x) => x.type === opts.type) : g.wings;
+        if (eligible.length === 0) continue;
+        const eaten = [...eligible].sort(() => rand() - 0.5).slice(0, 1 + Math.floor(rand() * Math.min(2, eligible.length)));
+        const when = new Date(created.getTime() + rand() * span * DAY);
+        for (const x of eaten) {
+          await db.insert(tastings).values({ wingId: x.id, userId, warId: w.id, ...card(x, mood.get(userId)!), notes: rand() < 0.35 ? pick(NOTES) : "", createdAt: when });
+        }
+        if (rand() < 0.5) {
+          await db.insert(spotReviews).values({ spotId: g.id, userId, warId: w.id, ...spotCard(g), notes: rand() < 0.4 ? pick(SPOT_NOTES) : "", createdAt: when });
+        }
+      }
+    }
+    return w.id;
   }
 
-  // One festival tournament, a few days ago.
-  const field = [...roster].sort(() => rand() - 0.5).slice(0, 8);
-  const entrants = seedEntrants(field.sort((x, y) => y.quality - x.quality).map((w) => w.id));
-  const quality = new Map(roster.map((w) => [w.id, w.quality]));
-  const picks: string[] = [];
-  for (;;) {
-    const b = buildBracket(entrants, picks);
-    if (b.complete) break;
-    const m = b.current;
-    const qa = quality.get(m.a)! + (rand() - 0.5) * 2;
-    const qb = quality.get(m.b)! + (rand() - 0.5) * 2;
-    picks.push(qa >= qb ? m.a : m.b);
-  }
-  const final = buildBracket(entrants, picks);
-  const when = new Date(now - 2 * DAY);
-  await db.transaction(async (tx) => {
-    const [t] = await tx
-      .insert(tournaments)
-      .values({ userId: JUDGES[2].id, name: "The Harvest Moon Wing Classic", size: 8, championId: final.champion, createdAt: when })
-      .returning({ id: tournaments.id });
-    for (const m of final.matches) {
-      await recordBattle(tx, { userId: JUDGES[2].id, wingAId: m.a, wingBId: m.b, winnerId: m.winner!, kind: "tournament", tournamentId: t.id, round: m.round, createdAt: when });
-    }
+  const allSpots = SPOTS.map((s) => s.name);
+  const everyone = JUDGES.map((j) => j.name);
+
+  await war({
+    name: "The Harvest Moon Wing War",
+    description: "Seven taverns, six judges, one moon. Eat everything. Trust no one. Bring wet wipes.",
+    host: "Lantern Lu",
+    members: everyone,
+    spotNames: allSpots,
+    fogOfWar: true,
+    startedDaysAgo: 40,
+    endsInDays: -10,
+    coverage: () => 0.85,
   });
 
-  if (!quiet) console.log(`🌱 Seeded ${SPOTS.length} spots, ${roster.length} wings, ${BATTLES + 7} wing battles, ${SHOWDOWNS} spot showdowns. Demo login: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  await war({
+    name: "The Spring Buffalo War",
+    description: "Only Buffalo counts. Classic, smoked, steamed, hot — find the one true Buffalo of the valley.",
+    host: "Mossbeard",
+    members: ["Mossbeard", "Demo Judge", "Captain Drumstick", "Fern"],
+    spotNames: ["The Copper Kettle Tavern", "Windmill Hill Wing Shack", "Sootfire Smokehouse", "The Bathhouse Bar & Grill", "Cloudtop Diner"],
+    type: "Buffalo",
+    fogOfWar: true,
+    startedDaysAgo: 6,
+    endsInDays: 9,
+    coverage: (id) => (id === judge("Demo Judge") ? 0.4 : 0.6),
+  });
+
+  await war({
+    name: "The Lantern Festival Skirmish",
+    description: "A quick, friendly one. No fog — we like to see the scoreboard move.",
+    host: "Captain Drumstick",
+    members: ["Captain Drumstick", "Lantern Lu", "Old Ember"],
+    spotNames: ["The Floating Lantern", "Grandma Tanuki's Kitchen", "The Bathhouse Bar & Grill", "Cloudtop Diner"],
+    fogOfWar: false,
+    startedDaysAgo: 4,
+    endsInDays: null,
+    coverage: () => 0.75,
+  });
+
+  // A sprinkle of solo reviews, outside any war.
+  for (let i = 0; i < 18; i++) {
+    const w = pick(roster);
+    const userId = pick(JUDGES).id;
+    await db.insert(tastings).values({ wingId: w.id, userId, ...card(w, mood.get(userId)!), notes: pick(NOTES), createdAt: new Date(now - rand() * 50 * DAY) });
+  }
+  const spotList = [...spotRoster.values()];
+  for (let i = 0; i < 8; i++) {
+    const s = pick(spotList);
+    await db.insert(spotReviews).values({ spotId: s.id, userId: pick(JUDGES).id, ...spotCard(s), notes: pick(SPOT_NOTES), createdAt: new Date(now - rand() * 50 * DAY) });
+  }
+
+  if (!quiet) console.log(`🌱 Seeded ${SPOTS.length} spots, ${roster.length} wings, ${JUDGES.length} judges and 3 wars. Demo login: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
   return true;
 }

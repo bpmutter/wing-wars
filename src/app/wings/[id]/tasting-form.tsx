@@ -33,7 +33,7 @@ export function TastingForm({ wingId, wingName }: { wingId: string; wingName: st
       </Field>
       <FormError error={state?.error} />
       <div>
-        <SubmitButton pendingText="Writing in the journal…">📓 Log tasting</SubmitButton>
+        <SubmitButton pendingText="Writing in the journal…">📓 Save review</SubmitButton>
       </div>
     </form>
   );

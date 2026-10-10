@@ -1,64 +1,92 @@
 import "server-only";
-import { aliasedTable, and, asc, count, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { battles, spotBattles, spotReviews, spots, tastings, tournaments, user, wingTypes, wings } from "@/db/schema";
+import { spotReviews, spots, tastings, user, warBattlegrounds, warMembers, wars, wingTypes, wings } from "@/db/schema";
 import { average, spotAverage, type Scores, type SpotScores } from "./scoring";
+import { computeWarResults, PRIOR_WEIGHT } from "./war-results";
+import { resultsVisible, warEnded } from "./wars";
 
-/* ── helpers ─────────────────────────────────────────────────── */
+/*
+ * Rankings everywhere use a Bayesian average (see war-results.ts) so that a
+ * wing with one 10/10 scorecard doesn't outrank one with twenty 9s.
+ */
+
+const wingTotal = sql<number>`(${tastings.crisp} + ${tastings.sauce} + ${tastings.juiciness} + ${tastings.heat} + ${tastings.value})`;
+const reviewTotal = sql<number>`(${spotReviews.wingGame} + ${spotReviews.sides} + ${spotReviews.vibe} + ${spotReviews.service} + ${spotReviews.value})`;
 
 const tastingStats = db
   .select({
     wingId: tastings.wingId,
     tastingCount: count().as("tasting_count"),
-    avgTotal: sql<number>`avg(${tastings.crisp} + ${tastings.sauce} + ${tastings.juiciness} + ${tastings.heat} + ${tastings.value})`.as("avg_total"),
+    sumTotal: sql<number>`sum(${wingTotal})`.as("sum_total"),
   })
   .from(tastings)
   .groupBy(tastings.wingId)
   .as("ts");
 
-const wingListSelect = {
-  id: wings.id,
-  name: wings.name,
-  typeId: wingTypes.id,
-  typeName: wingTypes.name,
-  typeEmoji: wingTypes.emoji,
-  style: wings.style,
-  heat: wings.heat,
-  elo: wings.elo,
-  wins: wings.wins,
-  losses: wings.losses,
-  spotId: spots.id,
-  spotName: spots.name,
-  neighborhood: spots.neighborhood,
-  tastingCount: sql<number>`coalesce(${tastingStats.tastingCount}, 0)`,
-  avgTotal: tastingStats.avgTotal,
-};
+async function globalWingMean() {
+  const [row] = await db.select({ m: sql<number | null>`avg(${wingTotal})` }).from(tastings);
+  return Number(row?.m ?? 30);
+}
 
-export type WingListItem = Awaited<ReturnType<typeof listWings>>[number];
+async function globalReviewMean() {
+  const [row] = await db.select({ m: sql<number | null>`avg(${reviewTotal})` }).from(spotReviews);
+  return Number(row?.m ?? 30);
+}
 
-const wingA = aliasedTable(wings, "wing_a");
-const wingB = aliasedTable(wings, "wing_b");
-const spotA = aliasedTable(spots, "spot_a");
-const spotB = aliasedTable(spots, "spot_b");
+/** Bayesian score from a sum and a count, without needing every value. */
+function adjusted(sum: number, n: number, prior: number) {
+  return (sum + prior * PRIOR_WEIGHT) / (n + PRIOR_WEIGHT);
+}
 
 /* ── wings ───────────────────────────────────────────────────── */
 
-export async function listWings(opts: { sort?: "elo" | "new" | "tasted"; limit?: number; typeId?: string } = {}) {
-  const order =
-    opts.sort === "new"
-      ? [desc(wings.createdAt)]
-      : opts.sort === "tasted"
-        ? [desc(sql`coalesce(${tastingStats.tastingCount}, 0)`), desc(wings.elo)]
-        : [desc(wings.elo), desc(wings.wins)];
-  const q = db
-    .select(wingListSelect)
-    .from(wings)
-    .innerJoin(spots, eq(wings.spotId, spots.id))
-    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
-    .leftJoin(tastingStats, eq(tastingStats.wingId, wings.id))
-    .where(opts.typeId ? eq(wings.wingTypeId, opts.typeId) : undefined)
-    .orderBy(...order);
-  return opts.limit ? q.limit(opts.limit) : q;
+export type WingListItem = Awaited<ReturnType<typeof listWings>>[number];
+
+export async function listWings(opts: { sort?: "top" | "new" | "tasted"; typeId?: string; spotId?: string; limit?: number } = {}) {
+  const filters = [];
+  if (opts.typeId) filters.push(eq(wings.wingTypeId, opts.typeId));
+  if (opts.spotId) filters.push(eq(wings.spotId, opts.spotId));
+  const [rows, prior] = await Promise.all([
+    db
+      .select({
+        id: wings.id,
+        name: wings.name,
+        style: wings.style,
+        heat: wings.heat,
+        createdAt: wings.createdAt,
+        typeId: wingTypes.id,
+        typeName: wingTypes.name,
+        typeEmoji: wingTypes.emoji,
+        spotId: spots.id,
+        spotName: spots.name,
+        neighborhood: spots.neighborhood,
+        tastingCount: sql<number>`coalesce(${tastingStats.tastingCount}, 0)`,
+        sumTotal: sql<number>`coalesce(${tastingStats.sumTotal}, 0)`,
+      })
+      .from(wings)
+      .innerJoin(spots, eq(wings.spotId, spots.id))
+      .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
+      .leftJoin(tastingStats, eq(tastingStats.wingId, wings.id))
+      .where(filters.length ? and(...filters) : undefined),
+    globalWingMean(),
+  ]);
+  const list = rows.map((r) => {
+    const n = Number(r.tastingCount);
+    return {
+      ...r,
+      tastingCount: n,
+      avgTotal: n ? Number(r.sumTotal) / n : null,
+      score: n ? adjusted(Number(r.sumTotal), n, prior) : null,
+    };
+  });
+  list.sort((a, b) => {
+    if (opts.sort === "new") return b.createdAt.getTime() - a.createdAt.getTime();
+    if (opts.sort === "tasted") return b.tastingCount - a.tastingCount || (b.score ?? 0) - (a.score ?? 0);
+    if ((a.score === null) !== (b.score === null)) return a.score === null ? 1 : -1;
+    return (b.score ?? 0) - (a.score ?? 0) || a.name.localeCompare(b.name);
+  });
+  return opts.limit ? list.slice(0, opts.limit) : list;
 }
 
 export async function getWing(id: string) {
@@ -71,279 +99,170 @@ export async function getWing(id: string) {
   if (!row) return null;
 
   const notes = await db
-    .select({ tasting: tastings, userName: user.name })
+    .select({ tasting: tastings, userName: user.name, warName: wars.name })
     .from(tastings)
     .innerJoin(user, eq(tastings.userId, user.id))
+    .leftJoin(wars, eq(tastings.warId, wars.id))
     .where(eq(tastings.wingId, id))
     .orderBy(desc(tastings.createdAt));
 
-  const [{ place }] = await db
-    .select({ place: sql<number>`count(*) + 1` })
-    .from(wings)
-    .where(sql`${wings.elo} > ${row.wing.elo}`);
-
-  let typePlace: number | null = null;
-  if (row.wing.wingTypeId) {
-    const [{ n }] = await db
-      .select({ n: sql<number>`count(*) + 1` })
-      .from(wings)
-      .where(and(eq(wings.wingTypeId, row.wing.wingTypeId), sql`${wings.elo} > ${row.wing.elo}`));
-    typePlace = Number(n);
-  }
+  const all = await listWings();
+  const place = all.findIndex((w) => w.id === id) + 1;
+  const ofType = row.wing.wingTypeId ? all.filter((w) => w.typeId === row.wing.wingTypeId) : [];
+  const typePlace = ofType.findIndex((w) => w.id === id) + 1 || null;
+  const me = all.find((w) => w.id === id)!;
 
   return {
     ...row,
     tastings: notes,
     averages: average(notes.map((n) => n.tasting as Scores)),
-    place: Number(place),
-    typePlace,
+    avgTotal: me.avgTotal,
+    score: me.score,
+    place: me.score === null ? null : place,
+    typePlace: me.score === null ? null : typePlace,
   };
 }
 
-/** Every wing, lightly, for the battle picker. */
-export async function wingOptions() {
-  return db
-    .select({
-      id: wings.id,
-      name: wings.name,
-      style: wings.style,
-      heat: wings.heat,
-      elo: wings.elo,
-      spotName: spots.name,
-      typeId: wings.wingTypeId,
-      typeName: wingTypes.name,
-    })
-    .from(wings)
-    .innerJoin(spots, eq(wings.spotId, spots.id))
-    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
-    .orderBy(asc(spots.name), asc(wings.name));
-}
-
-export type WingOption = Awaited<ReturnType<typeof wingOptions>>[number];
-
 /* ── spots ───────────────────────────────────────────────────── */
-
-const reviewStats = db
-  .select({
-    spotId: spotReviews.spotId,
-    reviewCount: count().as("review_count"),
-    avgTotal: sql<number>`avg(${spotReviews.wingGame} + ${spotReviews.sides} + ${spotReviews.vibe} + ${spotReviews.service} + ${spotReviews.value})`.as("avg_spot_total"),
-  })
-  .from(spotReviews)
-  .groupBy(spotReviews.spotId)
-  .as("rs");
 
 export type SpotListItem = Awaited<ReturnType<typeof listSpots>>[number];
 
 export async function listSpots(opts: { limit?: number } = {}) {
-  const wingCounts = db
-    .select({ spotId: wings.spotId, wingCount: count().as("wing_count"), bestWingElo: sql<number>`max(${wings.elo})`.as("best_wing_elo") })
-    .from(wings)
-    .groupBy(wings.spotId)
-    .as("wc");
-  const q = db
+  const reviewStats = db
+    .select({ spotId: spotReviews.spotId, n: count().as("review_count"), sum: sql<number>`sum(${reviewTotal})`.as("review_sum") })
+    .from(spotReviews)
+    .groupBy(spotReviews.spotId)
+    .as("rs");
+  const wingStats = db
     .select({
-      id: spots.id,
-      name: spots.name,
-      neighborhood: spots.neighborhood,
-      description: spots.description,
-      elo: spots.elo,
-      wins: spots.wins,
-      losses: spots.losses,
-      wingCount: sql<number>`coalesce(${wingCounts.wingCount}, 0)`,
-      bestWingElo: wingCounts.bestWingElo,
-      reviewCount: sql<number>`coalesce(${reviewStats.reviewCount}, 0)`,
-      avgTotal: reviewStats.avgTotal,
+      spotId: wings.spotId,
+      wingCount: sql<number>`count(distinct ${wings.id})`.as("wing_count"),
+      tastingCount: sql<number>`count(${tastings.id})`.as("spot_tasting_count"),
+      avgWing: sql<number | null>`avg(${wingTotal})`.as("avg_wing"),
     })
-    .from(spots)
-    .leftJoin(wingCounts, eq(wingCounts.spotId, spots.id))
-    .leftJoin(reviewStats, eq(reviewStats.spotId, spots.id))
-    .orderBy(desc(spots.elo), asc(spots.name));
-  return opts.limit ? q.limit(opts.limit) : q;
+    .from(wings)
+    .leftJoin(tastings, eq(tastings.wingId, wings.id))
+    .groupBy(wings.spotId)
+    .as("ws");
+
+  const [rows, prior, crowns] = await Promise.all([
+    db
+      .select({
+        id: spots.id,
+        name: spots.name,
+        neighborhood: spots.neighborhood,
+        description: spots.description,
+        reviewCount: sql<number>`coalesce(${reviewStats.n}, 0)`,
+        reviewSum: sql<number>`coalesce(${reviewStats.sum}, 0)`,
+        wingCount: sql<number>`coalesce(${wingStats.wingCount}, 0)`,
+        tastingCount: sql<number>`coalesce(${wingStats.tastingCount}, 0)`,
+        avgWing: wingStats.avgWing,
+      })
+      .from(spots)
+      .leftJoin(reviewStats, eq(reviewStats.spotId, spots.id))
+      .leftJoin(wingStats, eq(wingStats.spotId, spots.id)),
+    globalReviewMean(),
+    warCrowns(),
+  ]);
+
+  const list = rows.map((r) => {
+    const n = Number(r.reviewCount);
+    return {
+      ...r,
+      reviewCount: n,
+      wingCount: Number(r.wingCount),
+      tastingCount: Number(r.tastingCount),
+      avgWing: r.avgWing == null ? null : Number(r.avgWing),
+      avgReview: n ? Number(r.reviewSum) / n : null,
+      score: n ? adjusted(Number(r.reviewSum), n, prior) : null,
+      warsWon: crowns.get(r.id) ?? 0,
+    };
+  });
+  list.sort((a, b) => {
+    if ((a.score === null) !== (b.score === null)) return a.score === null ? 1 : -1;
+    return b.warsWon - a.warsWon || (b.score ?? 0) - (a.score ?? 0) || a.name.localeCompare(b.name);
+  });
+  return opts.limit ? list.slice(0, opts.limit) : list;
 }
 
 export async function getSpot(id: string) {
   const [spot] = await db.select().from(spots).where(eq(spots.id, id));
   if (!spot) return null;
-  const spotWings = await db
-    .select(wingListSelect)
-    .from(wings)
-    .innerJoin(spots, eq(wings.spotId, spots.id))
-    .leftJoin(wingTypes, eq(wings.wingTypeId, wingTypes.id))
-    .leftJoin(tastingStats, eq(tastingStats.wingId, wings.id))
-    .where(eq(wings.spotId, id))
-    .orderBy(desc(wings.elo));
-
-  const reviews = await db
-    .select({ review: spotReviews, userName: user.name })
-    .from(spotReviews)
-    .innerJoin(user, eq(spotReviews.userId, user.id))
-    .where(eq(spotReviews.spotId, id))
-    .orderBy(desc(spotReviews.createdAt));
-
-  const [{ place }] = await db
-    .select({ place: sql<number>`count(*) + 1` })
-    .from(spots)
-    .where(sql`${spots.elo} > ${spot.elo}`);
-
+  const [spotWings, reviews, warRows] = await Promise.all([
+    listWings({ spotId: id }),
+    db
+      .select({ review: spotReviews, userName: user.name, warName: wars.name })
+      .from(spotReviews)
+      .innerJoin(user, eq(spotReviews.userId, user.id))
+      .leftJoin(wars, eq(spotReviews.warId, wars.id))
+      .where(eq(spotReviews.spotId, id))
+      .orderBy(desc(spotReviews.createdAt)),
+    db
+      .select({ id: wars.id })
+      .from(warBattlegrounds)
+      .innerJoin(wars, eq(warBattlegrounds.warId, wars.id))
+      .where(eq(warBattlegrounds.spotId, id))
+      .orderBy(desc(wars.createdAt)),
+  ]);
+  const summaries = await warSummaries(warRows.map((w) => w.id));
+  const all = await listSpots();
+  const me = all.find((s) => s.id === id)!;
   return {
     spot,
     wings: spotWings,
     reviews,
     averages: spotAverage(reviews.map((r) => r.review as SpotScores)),
-    place: Number(place),
+    avgReview: me.avgReview,
+    avgWing: me.avgWing,
+    place: me.score === null ? null : all.findIndex((s) => s.id === id) + 1,
+    warsWon: me.warsWon,
+    wars: summaries.map((w) => ({ ...w, place: w.visible ? (w.standings.find((s) => s.spotId === id)?.place ?? null) : null })),
   };
 }
 
-/** Every spot, lightly, for the spot battle picker. */
 export async function spotOptions() {
   return db
-    .select({ id: spots.id, name: spots.name, neighborhood: spots.neighborhood, elo: spots.elo })
+    .select({ id: spots.id, name: spots.name, neighborhood: spots.neighborhood })
     .from(spots)
     .orderBy(asc(spots.name));
 }
 
-export type SpotOption = Awaited<ReturnType<typeof spotOptions>>[number];
-
-/* ── spot battles ────────────────────────────────────────────── */
-
-const spotBattleSelect = {
-  id: spotBattles.id,
-  createdAt: spotBattles.createdAt,
-  verdict: spotBattles.verdict,
-  winnerId: spotBattles.winnerId,
-  eloBeforeA: spotBattles.eloBeforeA,
-  eloBeforeB: spotBattles.eloBeforeB,
-  eloDeltaA: spotBattles.eloDeltaA,
-  eloDeltaB: spotBattles.eloDeltaB,
-  userId: spotBattles.userId,
-  userName: user.name,
-  a: { id: spotA.id, name: spotA.name, neighborhood: spotA.neighborhood },
-  b: { id: spotB.id, name: spotB.name, neighborhood: spotB.neighborhood },
-};
-
-function spotBattleQuery() {
-  return db
-    .select(spotBattleSelect)
-    .from(spotBattles)
-    .innerJoin(user, eq(spotBattles.userId, user.id))
-    .innerJoin(spotA, eq(spotBattles.spotAId, spotA.id))
-    .innerJoin(spotB, eq(spotBattles.spotBId, spotB.id));
-}
-
-export type SpotBattleListItem = Awaited<ReturnType<typeof recentSpotBattles>>[number];
-
-export async function recentSpotBattles(opts: { limit?: number; spotId?: string; userId?: string } = {}) {
-  const filters = [];
-  if (opts.spotId) filters.push(or(eq(spotBattles.spotAId, opts.spotId), eq(spotBattles.spotBId, opts.spotId)));
-  if (opts.userId) filters.push(eq(spotBattles.userId, opts.userId));
-  return spotBattleQuery()
-    .where(filters.length ? and(...filters) : undefined)
-    .orderBy(desc(spotBattles.createdAt), desc(sql`"spot_battles"."rowid"`))
-    .limit(opts.limit ?? 20);
-}
-
-export async function getSpotBattle(id: string) {
-  const [battle] = await spotBattleQuery().where(eq(spotBattles.id, id));
-  if (!battle) return null;
-  const cards = await db.select().from(spotReviews).where(eq(spotReviews.spotBattleId, id));
-  const cardA = cards.find((c) => c.spotId === battle.a.id) ?? null;
-  const cardB = cards.find((c) => c.spotId === battle.b.id) ?? null;
-  const h2h = await db
-    .select({ winnerId: spotBattles.winnerId, n: count() })
-    .from(spotBattles)
-    .where(
-      or(
-        and(eq(spotBattles.spotAId, battle.a.id), eq(spotBattles.spotBId, battle.b.id)),
-        and(eq(spotBattles.spotAId, battle.b.id), eq(spotBattles.spotBId, battle.a.id)),
-      ),
-    )
-    .groupBy(spotBattles.winnerId);
-  const record = {
-    a: h2h.find((r) => r.winnerId === battle.a.id)?.n ?? 0,
-    b: h2h.find((r) => r.winnerId === battle.b.id)?.n ?? 0,
-  };
-  return { battle, cardA, cardB, record };
-}
-
 /* ── wing types ──────────────────────────────────────────────── */
 
-/**
- * Win/loss record of each wing type in battles *between different types*
- * (Buffalo vs Buffalo tells us nothing about Buffalo as a whole).
- */
-async function crossTypeRecords() {
-  const rows = await db
-    .select({ typeA: wingA.wingTypeId, typeB: wingB.wingTypeId, aWon: sql<number>`${battles.winnerId} = ${battles.wingAId}` })
-    .from(battles)
-    .innerJoin(wingA, eq(battles.wingAId, wingA.id))
-    .innerJoin(wingB, eq(battles.wingBId, wingB.id))
-    .where(sql`${wingA.wingTypeId} is not null and ${wingB.wingTypeId} is not null and ${wingA.wingTypeId} != ${wingB.wingTypeId}`);
-  const rec = new Map<string, { wins: number; losses: number }>();
-  const bump = (id: string, won: boolean) => {
-    const r = rec.get(id) ?? { wins: 0, losses: 0 };
-    if (won) r.wins++;
-    else r.losses++;
-    rec.set(id, r);
-  };
-  for (const r of rows) {
-    bump(r.typeA!, !!r.aWon);
-    bump(r.typeB!, !r.aWon);
-  }
-  return rec;
+export async function listWingTypes() {
+  const [types, allWings] = await Promise.all([db.select().from(wingTypes), listWings()]);
+  return types
+    .map((t) => {
+      const mine = allWings.filter((w) => w.typeId === t.id);
+      const tasted = mine.filter((w) => w.tastingCount > 0);
+      const n = tasted.reduce((s, w) => s + w.tastingCount, 0);
+      const sum = tasted.reduce((s, w) => s + (w.avgTotal ?? 0) * w.tastingCount, 0);
+      return {
+        ...t,
+        wingCount: mine.length,
+        spotCount: new Set(mine.map((w) => w.spotId)).size,
+        tastingCount: n,
+        avgTotal: n ? sum / n : null,
+        top: mine.find((w) => w.score !== null) ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (!!a.wingCount !== !!b.wingCount) return a.wingCount ? -1 : 1;
+      if ((a.avgTotal === null) !== (b.avgTotal === null)) return a.avgTotal === null ? 1 : -1;
+      return (b.avgTotal ?? 0) - (a.avgTotal ?? 0) || a.name.localeCompare(b.name);
+    });
 }
 
 export type WingTypeListItem = Awaited<ReturnType<typeof listWingTypes>>[number];
 
-export async function listWingTypes() {
-  const champ = aliasedTable(wings, "type_champ");
-  const rows = await db
-    .select({
-      id: wingTypes.id,
-      name: wingTypes.name,
-      emoji: wingTypes.emoji,
-      description: wingTypes.description,
-      wingCount: count(wings.id),
-      avgElo: sql<number | null>`avg(${wings.elo})`,
-      bestElo: sql<number | null>`max(${wings.elo})`,
-    })
-    .from(wingTypes)
-    .leftJoin(wings, eq(wings.wingTypeId, wingTypes.id))
-    .groupBy(wingTypes.id);
-
-  // The best wing of each type.
-  const tops = await db
-    .select({ typeId: champ.wingTypeId, id: champ.id, name: champ.name, heat: champ.heat, style: champ.style, elo: champ.elo, spotName: spots.name })
-    .from(champ)
-    .innerJoin(spots, eq(champ.spotId, spots.id))
-    .where(sql`${champ.elo} = (select max(w2.elo) from wings w2 where w2.wing_type_id = ${champ.wingTypeId})`);
-  const topByType = new Map(tops.map((t) => [t.typeId, t]));
-  const records = await crossTypeRecords();
-
-  return rows
-    .map((r) => {
-      const rec = records.get(r.id) ?? { wins: 0, losses: 0 };
-      return { ...r, ...rec, top: topByType.get(r.id) ?? null };
-    })
-    .sort((x, y) => {
-      // Types with wings first, then types with a cross-type record (by win rate), then by average rating.
-      if (!!x.wingCount !== !!y.wingCount) return x.wingCount ? -1 : 1;
-      const px = x.wins + x.losses;
-      const py = y.wins + y.losses;
-      if (!!px !== !!py) return px ? -1 : 1;
-      const rx = px ? x.wins / px : 0;
-      const ry = py ? y.wins / py : 0;
-      if (rx !== ry) return ry - rx;
-      return Number(y.avgElo ?? 0) - Number(x.avgElo ?? 0);
-    });
-}
-
 export async function getWingType(id: string) {
   const [type] = await db.select().from(wingTypes).where(eq(wingTypes.id, id));
   if (!type) return null;
-  const typeWings = await listWings({ typeId: id });
-  const record = (await crossTypeRecords()).get(id) ?? { wins: 0, losses: 0 };
-  return { type, wings: typeWings, record };
+  const [typeWings, typeWars] = await Promise.all([
+    listWings({ typeId: id }),
+    db.select({ id: wars.id }).from(wars).where(eq(wars.wingTypeId, id)).orderBy(desc(wars.createdAt)),
+  ]);
+  return { type, wings: typeWings, wars: await warSummaries(typeWars.map((w) => w.id)) };
 }
 
 export async function wingTypeOptions() {
@@ -352,110 +271,212 @@ export async function wingTypeOptions() {
 
 export type WingTypeOption = Awaited<ReturnType<typeof wingTypeOptions>>[number];
 
-/* ── battles ─────────────────────────────────────────────────── */
+/* ── wars ────────────────────────────────────────────────────── */
 
-
-const battleSelect = {
-  id: battles.id,
-  kind: battles.kind,
-  createdAt: battles.createdAt,
-  verdict: battles.verdict,
-  winnerId: battles.winnerId,
-  tournamentId: battles.tournamentId,
-  round: battles.round,
-  eloBeforeA: battles.eloBeforeA,
-  eloBeforeB: battles.eloBeforeB,
-  eloDeltaA: battles.eloDeltaA,
-  eloDeltaB: battles.eloDeltaB,
-  userId: battles.userId,
-  userName: user.name,
-  a: { id: wingA.id, name: wingA.name, heat: wingA.heat, style: wingA.style, spotName: spotA.name, spotId: spotA.id },
-  b: { id: wingB.id, name: wingB.name, heat: wingB.heat, style: wingB.style, spotName: spotB.name, spotId: spotB.id },
-};
-
-function battleQuery() {
-  return db
-    .select(battleSelect)
-    .from(battles)
-    .innerJoin(user, eq(battles.userId, user.id))
-    .innerJoin(wingA, eq(battles.wingAId, wingA.id))
-    .innerJoin(wingB, eq(battles.wingBId, wingB.id))
-    .innerJoin(spotA, eq(wingA.spotId, spotA.id))
-    .innerJoin(spotB, eq(wingB.spotId, spotB.id));
-}
-
-export type BattleListItem = Awaited<ReturnType<typeof recentBattles>>[number];
-
-export async function recentBattles(opts: { limit?: number; wingId?: string; userId?: string; kind?: "duel" | "tournament" } = {}) {
-  const filters = [];
-  if (opts.wingId) filters.push(or(eq(battles.wingAId, opts.wingId), eq(battles.wingBId, opts.wingId)));
-  if (opts.userId) filters.push(eq(battles.userId, opts.userId));
-  if (opts.kind) filters.push(eq(battles.kind, opts.kind));
-  return battleQuery()
-    .where(filters.length ? and(...filters) : undefined)
-    .orderBy(desc(battles.createdAt), desc(sql`"battles"."rowid"`))
-    .limit(opts.limit ?? 20);
-}
-
-export async function getBattle(id: string) {
-  const [battle] = await battleQuery().where(eq(battles.id, id));
-  if (!battle) return null;
-  const cards = await db.select().from(tastings).where(eq(tastings.battleId, id));
-  const cardA = cards.find((c) => c.wingId === battle.a.id) ?? null;
-  const cardB = cards.find((c) => c.wingId === battle.b.id) ?? null;
-
-  // All-time head-to-head record between these two wings.
-  const h2h = await db
-    .select({ winnerId: battles.winnerId, n: count() })
-    .from(battles)
-    .where(
-      or(
-        and(eq(battles.wingAId, battle.a.id), eq(battles.wingBId, battle.b.id)),
-        and(eq(battles.wingAId, battle.b.id), eq(battles.wingBId, battle.a.id)),
-      ),
-    )
-    .groupBy(battles.winnerId);
-  const record = {
-    a: h2h.find((r) => r.winnerId === battle.a.id)?.n ?? 0,
-    b: h2h.find((r) => r.winnerId === battle.b.id)?.n ?? 0,
-  };
-  return { battle, cardA, cardB, record };
-}
-
-/* ── tournaments ─────────────────────────────────────────────── */
-
-export async function getTournament(id: string) {
+/** Loads everything needed to compute a war's results. */
+async function loadWar(id: string) {
   const [row] = await db
-    .select({ tournament: tournaments, userName: user.name })
-    .from(tournaments)
-    .innerJoin(user, eq(tournaments.userId, user.id))
-    .where(eq(tournaments.id, id));
+    .select({ war: wars, hostName: user.name, type: wingTypes })
+    .from(wars)
+    .innerJoin(user, eq(wars.hostId, user.id))
+    .leftJoin(wingTypes, eq(wars.wingTypeId, wingTypes.id))
+    .where(eq(wars.id, id));
   if (!row) return null;
-  const matches = await battleQuery()
-    .where(eq(battles.tournamentId, id))
-    .orderBy(asc(battles.round), asc(sql`"battles"."rowid"`));
-  return { ...row, matches };
+
+  const [grounds, members, cards, reviews] = await Promise.all([
+    db
+      .select({ spotId: spots.id, name: spots.name, neighborhood: spots.neighborhood, addedAt: warBattlegrounds.createdAt })
+      .from(warBattlegrounds)
+      .innerJoin(spots, eq(warBattlegrounds.spotId, spots.id))
+      .where(eq(warBattlegrounds.warId, id))
+      .orderBy(asc(warBattlegrounds.createdAt), asc(spots.name)),
+    db
+      .select({ userId: user.id, name: user.name, joinedAt: warMembers.joinedAt })
+      .from(warMembers)
+      .innerJoin(user, eq(warMembers.userId, user.id))
+      .where(eq(warMembers.warId, id))
+      .orderBy(asc(warMembers.joinedAt)),
+    db
+      .select({ tasting: tastings, spotId: wings.spotId })
+      .from(tastings)
+      .innerJoin(wings, eq(tastings.wingId, wings.id))
+      .where(eq(tastings.warId, id)),
+    db.select().from(spotReviews).where(eq(spotReviews.warId, id)),
+  ]);
+
+  const results = computeWarResults({
+    spotIds: grounds.map((g) => g.spotId),
+    memberIds: members.map((m) => m.userId),
+    scorecards: cards.map((c) => ({ userId: c.tasting.userId, spotId: c.spotId, wingId: c.tasting.wingId, scores: c.tasting })),
+    reviews: reviews.map((r) => ({ userId: r.userId, spotId: r.spotId, scores: r })),
+  });
+
+  return { ...row, grounds, members, cards, reviews, results };
 }
 
-export async function recentTournaments(limit = 6) {
-  const champ = aliasedTable(wings, "champ");
+export type WarSummary = Awaited<ReturnType<typeof warSummaries>>[number];
+
+/** Compact war info for lists: status, counts, and the champion if it's visible. */
+export async function warSummaries(ids?: string[]) {
+  if (ids && ids.length === 0) return [];
+  const rows = await db
+    .select({ id: wars.id })
+    .from(wars)
+    .where(ids ? inArray(wars.id, ids) : undefined)
+    .orderBy(desc(wars.createdAt));
+  const now = new Date();
+  const loaded = await Promise.all(rows.map((r) => loadWar(r.id)));
+  return loaded
+    .filter((w) => !!w)
+    .map((w) => {
+      const visible = resultsVisible(w.war, now);
+      const championId = visible ? w.results.champion : null;
+      return {
+        id: w.war.id,
+        name: w.war.name,
+        description: w.war.description,
+        hostId: w.war.hostId,
+        hostName: w.hostName,
+        type: w.type,
+        fogOfWar: w.war.fogOfWar,
+        endsAt: w.war.endsAt,
+        endedAt: w.war.endedAt,
+        createdAt: w.war.createdAt,
+        ended: warEnded(w.war, now),
+        visible,
+        memberIds: w.members.map((m) => m.userId),
+        memberCount: w.members.length,
+        battlegroundCount: w.grounds.length,
+        scorecardCount: w.cards.length,
+        completion: w.results.completion,
+        standings: visible ? w.results.standings : [],
+        champion: championId ? (w.grounds.find((g) => g.spotId === championId) ?? null) : null,
+        battlegrounds: w.grounds.map((g) => ({ spotId: g.spotId, name: g.name })),
+      };
+    });
+}
+
+/** spotId → number of ended wars it won. */
+async function warCrowns() {
+  const ended = await db
+    .select({ id: wars.id })
+    .from(wars)
+    .where(sql`${wars.endedAt} is not null or (${wars.endsAt} is not null and ${wars.endsAt} <= ${Date.now()})`);
+  const summaries = await warSummaries(ended.map((w) => w.id));
+  const crowns = new Map<string, number>();
+  for (const w of summaries) if (w.champion) crowns.set(w.champion.spotId, (crowns.get(w.champion.spotId) ?? 0) + 1);
+  return crowns;
+}
+
+export async function listWars() {
+  const all = await warSummaries();
+  return {
+    active: all.filter((w) => !w.ended),
+    ended: all.filter((w) => w.ended).sort((a, b) => (b.endedAt ?? b.endsAt)!.getTime() - (a.endedAt ?? a.endsAt)!.getTime()),
+  };
+}
+
+/** The full war page: everything, with results hidden behind the fog unless visible. */
+export async function getWar(id: string, viewerId: string | null) {
+  const w = await loadWar(id);
+  if (!w) return null;
+  const now = new Date();
+  const ended = warEnded(w.war, now);
+  const visible = resultsVisible(w.war, now);
+
+  const wingIds = [...new Set(w.cards.map((c) => c.tasting.wingId))];
+  const wingRows = wingIds.length
+    ? await db
+        .select({ id: wings.id, name: wings.name, heat: wings.heat, style: wings.style, spotId: wings.spotId })
+        .from(wings)
+        .where(inArray(wings.id, wingIds))
+    : [];
+  const wingById = new Map(wingRows.map((x) => [x.id, x]));
+
+  const judgedBy = (spotId: string) => new Set(w.cards.filter((c) => c.spotId === spotId).map((c) => c.tasting.userId));
+  const isMember = !!viewerId && w.members.some((m) => m.userId === viewerId);
+  const viewerJudged = new Set(viewerId ? w.cards.filter((c) => c.tasting.userId === viewerId).map((c) => c.spotId) : []);
+
+  return {
+    war: w.war,
+    hostName: w.hostName,
+    type: w.type,
+    ended,
+    visible,
+    isMember,
+    isHost: viewerId === w.war.hostId,
+    members: w.members.map((m) => ({
+      ...m,
+      judged: w.results.judges.find((j) => j.userId === m.userId)?.battlegroundsJudged ?? 0,
+    })),
+    battlegrounds: w.grounds.map((g) => ({
+      ...g,
+      judges: judgedBy(g.spotId).size,
+      viewerJudged: viewerJudged.has(g.spotId),
+      standing: visible ? (w.results.standings.find((s) => s.spotId === g.spotId) ?? null) : null,
+    })),
+    viewerProgress: viewerJudged.size,
+    scorecardCount: w.cards.length,
+    results: visible ? w.results : null,
+    completion: w.results.completion,
+    wings: wingById,
+  };
+}
+
+/** One restaurant within a war: the wings to judge there and the viewer's scorecards. */
+export async function getBattleground(warId: string, spotId: string, viewerId: string | null) {
+  const w = await loadWar(warId);
+  if (!w) return null;
+  const index = w.grounds.findIndex((g) => g.spotId === spotId);
+  if (index === -1) return null;
+  const now = new Date();
+  const visible = resultsVisible(w.war, now);
+
+  const [spot] = await db.select().from(spots).where(eq(spots.id, spotId));
+  const spotWings = await listWings({ spotId });
+  const eligible = w.war.wingTypeId ? spotWings.filter((x) => x.typeId === w.war.wingTypeId) : spotWings;
+
+  const here = w.cards.filter((c) => c.spotId === spotId);
+  const myCards = viewerId ? here.filter((c) => c.tasting.userId === viewerId).map((c) => c.tasting) : [];
+  const myReview = viewerId ? (w.reviews.find((r) => r.spotId === spotId && r.userId === viewerId) ?? null) : null;
+
+  // Per-wing war averages at this battleground (only shown when results are visible).
+  const wingAverages = new Map<string, { avg: number; judges: number }>();
+  for (const x of eligible) {
+    const list = here.filter((c) => c.tasting.wingId === x.id).map((c) => c.tasting);
+    if (list.length) wingAverages.set(x.id, { avg: list.reduce((s, t) => s + t.crisp + t.sauce + t.juiciness + t.heat + t.value, 0) / list.length, judges: list.length });
+  }
+
+  return {
+    war: w.war,
+    type: w.type,
+    ended: warEnded(w.war, now),
+    visible,
+    isMember: !!viewerId && w.members.some((m) => m.userId === viewerId),
+    spot,
+    index,
+    total: w.grounds.length,
+    prev: w.grounds[index - 1] ?? null,
+    next: w.grounds[index + 1] ?? null,
+    wings: eligible,
+    otherWingCount: spotWings.length - eligible.length,
+    myCards,
+    myReview,
+    judges: new Set(here.map((c) => c.tasting.userId)).size,
+    memberCount: w.members.length,
+    standing: visible ? (w.results.standings.find((s) => s.spotId === spotId) ?? null) : null,
+    wingAverages: visible ? wingAverages : null,
+  };
+}
+
+/** Spots that aren't battlegrounds in this war yet. */
+export async function spotsOutsideWar(warId: string) {
+  const inWar = db.select({ id: warBattlegrounds.spotId }).from(warBattlegrounds).where(eq(warBattlegrounds.warId, warId));
   return db
-    .select({
-      id: tournaments.id,
-      name: tournaments.name,
-      size: tournaments.size,
-      createdAt: tournaments.createdAt,
-      userName: user.name,
-      championName: champ.name,
-      championId: champ.id,
-      championSpot: spots.name,
-    })
-    .from(tournaments)
-    .innerJoin(user, eq(tournaments.userId, user.id))
-    .leftJoin(champ, eq(tournaments.championId, champ.id))
-    .leftJoin(spots, eq(champ.spotId, spots.id))
-    .orderBy(desc(tournaments.createdAt))
-    .limit(limit);
+    .select({ id: spots.id, name: spots.name, neighborhood: spots.neighborhood })
+    .from(spots)
+    .where(notInArray(spots.id, inWar))
+    .orderBy(asc(spots.name));
 }
 
 /* ── people ──────────────────────────────────────────────────── */
@@ -467,81 +488,55 @@ export async function getJudge(userId: string) {
     .where(eq(user.id, userId));
   if (!judge) return null;
 
-  const notes = await db
-    .select({
-      tasting: tastings,
-      wingName: wings.name,
-      spotName: spots.name,
-    })
-    .from(tastings)
-    .innerJoin(wings, eq(tastings.wingId, wings.id))
-    .innerJoin(spots, eq(wings.spotId, spots.id))
-    .where(eq(tastings.userId, userId))
-    .orderBy(desc(tastings.createdAt))
-    .limit(50);
-
-  const [{ battleCount }] = await db
-    .select({ battleCount: count() })
-    .from(battles)
-    .where(eq(battles.userId, userId));
-
-  const tasted = new Set(notes.map((n) => n.tasting.wingId));
-
-  const reviews = await db
-    .select({ review: spotReviews, spotName: spots.name })
-    .from(spotReviews)
-    .innerJoin(spots, eq(spotReviews.spotId, spots.id))
-    .where(eq(spotReviews.userId, userId))
-    .orderBy(desc(spotReviews.createdAt))
-    .limit(50);
-
-  const [{ spotBattleCount }] = await db
-    .select({ spotBattleCount: count() })
-    .from(spotBattles)
-    .where(eq(spotBattles.userId, userId));
+  const [notes, reviews, memberships] = await Promise.all([
+    db
+      .select({ tasting: tastings, wingName: wings.name, spotName: spots.name, warName: wars.name })
+      .from(tastings)
+      .innerJoin(wings, eq(tastings.wingId, wings.id))
+      .innerJoin(spots, eq(wings.spotId, spots.id))
+      .leftJoin(wars, eq(tastings.warId, wars.id))
+      .where(eq(tastings.userId, userId))
+      .orderBy(desc(tastings.createdAt))
+      .limit(60),
+    db
+      .select({ review: spotReviews, spotName: spots.name })
+      .from(spotReviews)
+      .innerJoin(spots, eq(spotReviews.spotId, spots.id))
+      .where(eq(spotReviews.userId, userId))
+      .orderBy(desc(spotReviews.createdAt))
+      .limit(40),
+    db.select({ warId: warMembers.warId }).from(warMembers).where(eq(warMembers.userId, userId)),
+  ]);
 
   return {
     judge,
     tastings: notes,
     reviews,
-    battleCount,
-    spotBattleCount,
-    tastedWingCount: tasted.size,
-    battles: await recentBattles({ userId, limit: 10 }),
-    spotBattles: await recentSpotBattles({ userId, limit: 10 }),
+    wars: await warSummaries(memberships.map((m) => m.warId)),
+    tastedWingCount: new Set(notes.map((n) => n.tasting.wingId)).size,
   };
 }
 
+/** People who have filed the most scorecards. */
 export async function topJudges(limit = 5) {
-  // Spelled out: drizzle drops the table prefix on single-table queries, which breaks the correlation.
-  const n = sql<number>`(select count(*) from battles b where b.user_id = "user"."id") + (select count(*) from spot_battles sb where sb.user_id = "user"."id")`;
   return db
-    .select({ id: user.id, name: user.name, battles: n })
+    .select({ id: user.id, name: user.name, scorecards: count(tastings.id) })
     .from(user)
-    .where(sql`${n} > 0`)
-    .orderBy(desc(n))
+    .innerJoin(tastings, eq(tastings.userId, user.id))
+    .groupBy(user.id)
+    .orderBy(desc(count(tastings.id)))
     .limit(limit);
 }
 
 /* ── home page ───────────────────────────────────────────────── */
 
 export async function worldStats() {
-  const [[w], [s], [b], [sb], [t], [r]] = await Promise.all([
+  const [[w], [s], [wr], [t], [r]] = await Promise.all([
     db.select({ n: count() }).from(wings),
     db.select({ n: count() }).from(spots),
-    db.select({ n: count() }).from(battles),
-    db.select({ n: count() }).from(spotBattles),
+    db.select({ n: count() }).from(wars),
     db.select({ n: count() }).from(tastings),
     db.select({ n: count() }).from(spotReviews),
   ]);
-  return { wings: w.n, spots: s.n, battles: b.n + sb.n, tastings: t.n + r.n };
-}
-
-export async function wingsByIds(ids: string[]) {
-  if (ids.length === 0) return [];
-  return db
-    .select({ id: wings.id, name: wings.name, spotName: spots.name, elo: wings.elo })
-    .from(wings)
-    .innerJoin(spots, eq(wings.spotId, spots.id))
-    .where(inArray(wings.id, ids));
+  return { wings: w.n, spots: s.n, wars: wr.n, scorecards: t.n + r.n };
 }

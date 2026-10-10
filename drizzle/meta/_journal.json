@@ -15,6 +15,20 @@
       "when": 1791647178936,
       "tag": "0001_wing_types_and_spot_judging",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791659365383,
+      "tag": "0002_retire_battles",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791659395007,
+      "tag": "0003_wars",
+      "breakpoints": true
     }
   ]
 }

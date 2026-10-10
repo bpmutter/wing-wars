@@ -1,13 +1,11 @@
 import Link from "next/link";
-import type { BattleListItem, SpotBattleListItem, SpotListItem, WingListItem } from "@/lib/queries";
-import { timeAgo, winRate } from "@/lib/format";
+import type { SpotListItem, WarSummary, WingListItem } from "@/lib/queries";
 import { MAX_SPOT_TOTAL, MAX_TOTAL } from "@/lib/scoring";
-import { WingSpirit } from "./wing-spirit";
-import { EloDelta, HeatPips, RankBadge, TypeChip } from "./bits";
+import { HeatPips, Progress, RankBadge, TypeChip, WarStatus } from "./bits";
 import { SpotSpirit } from "./spot-spirit";
+import { WingSpirit } from "./wing-spirit";
 
 export function WingCard({ wing, place }: { wing: WingListItem; place?: number }) {
-  const rate = winRate(wing.wins, wing.losses);
   return (
     <Link href={`/wings/${wing.id}`} className="card group flex items-center gap-4 p-4 transition hover:-translate-y-0.5">
       {place !== undefined && <div className="w-8 text-center font-display text-2xl font-semibold text-ink-soft">{place}</div>}
@@ -16,114 +14,117 @@ export function WingCard({ wing, place }: { wing: WingListItem; place?: number }
         <div className="truncate font-display text-lg font-semibold">{wing.name}</div>
         <div className="truncate text-sm text-ink-soft">{wing.spotName}</div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          <RankBadge elo={wing.elo} />
+          <RankBadge score={wing.avgTotal} />
           <TypeChip type={wing} />
           <HeatPips heat={wing.heat} />
         </div>
       </div>
       <div className="shrink-0 text-right">
-        <div className="font-display text-2xl font-semibold tabular-nums">{wing.elo}</div>
-        <div className="text-xs text-ink-soft tabular-nums">
-          {wing.wins}W–{wing.losses}L{rate !== null && ` · ${rate}%`}
-        </div>
-        {wing.avgTotal != null && (
-          <div className="text-xs text-ink-soft tabular-nums">
-            ★ {Number(wing.avgTotal).toFixed(1)}/{MAX_TOTAL}
-          </div>
+        {wing.avgTotal !== null ? (
+          <>
+            <div className="font-display text-2xl font-semibold tabular-nums">
+              {wing.avgTotal.toFixed(1)}
+              <span className="text-sm text-ink-soft">/{MAX_TOTAL}</span>
+            </div>
+            <div className="text-xs text-ink-soft tabular-nums">
+              {wing.tastingCount} scorecard{wing.tastingCount === 1 ? "" : "s"}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-ink-soft">Not yet tasted</div>
         )}
-      </div>
-    </Link>
-  );
-}
-
-export function BattleCard({ battle, now }: { battle: BattleListItem; now: Date }) {
-  const aWon = battle.winnerId === battle.a.id;
-  const side = (w: typeof battle.a, won: boolean, delta: number) => (
-    <div className={`flex min-w-0 flex-1 items-center gap-2 ${won ? "" : "opacity-70"}`}>
-      <WingSpirit seed={w.id} heat={w.heat} style={w.style} size={44} crowned={won} dazed={!won} className="shrink-0" />
-      <div className="min-w-0">
-        <div className="truncate text-sm font-bold">{w.name}</div>
-        <div className="truncate text-xs text-ink-soft">
-          {w.spotName} · <EloDelta delta={delta} />
-        </div>
-      </div>
-    </div>
-  );
-  return (
-    <Link href={`/battles/${battle.id}`} className="card flex flex-col gap-2 p-3 transition hover:-translate-y-0.5">
-      <div className="flex items-center gap-2">
-        {side(battle.a, aWon, battle.eloDeltaA)}
-        <span className="shrink-0 font-display text-sm font-bold text-sauce">vs</span>
-        {side(battle.b, !aWon, battle.eloDeltaB)}
-      </div>
-      <div className="flex items-center justify-between text-xs text-ink-soft">
-        <span>
-          {battle.kind === "tournament" ? "🏯 Tournament match" : "⚔️ Duel"} judged by <b>{battle.userName}</b>
-        </span>
-        <span>{timeAgo(battle.createdAt, now)}</span>
       </div>
     </Link>
   );
 }
 
 export function SpotCard({ spot, place }: { spot: SpotListItem; place?: number }) {
-  const rate = winRate(spot.wins, spot.losses);
   return (
     <Link href={`/spots/${spot.id}`} className="card group flex items-center gap-4 p-4 transition hover:-translate-y-0.5">
       {place !== undefined && <div className="w-8 text-center font-display text-2xl font-semibold text-ink-soft">{place}</div>}
-      <SpotSpirit seed={spot.id} size={68} className="shrink-0 transition group-hover:animate-bob" />
+      <SpotSpirit seed={spot.id} size={68} crowned={spot.warsWon > 0} className="shrink-0 transition group-hover:animate-bob" />
       <div className="min-w-0 flex-1">
         <div className="truncate font-display text-lg font-semibold">{spot.name}</div>
         <div className="truncate text-sm text-ink-soft">{spot.neighborhood || "Somewhere in the hills"}</div>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
-          <RankBadge elo={spot.elo} kind="spot" />
+          <RankBadge score={spot.avgReview} kind="spot" />
+          {spot.warsWon > 0 && (
+            <span className="chip bg-honey/25! border-honey/60! text-ink!">
+              👑 {spot.warsWon} war{spot.warsWon === 1 ? "" : "s"} won
+            </span>
+          )}
           <span className="chip">
-            🍗 {spot.wingCount} wing{Number(spot.wingCount) === 1 ? "" : "s"}
+            🍗 {spot.wingCount} wing{spot.wingCount === 1 ? "" : "s"}
           </span>
         </div>
       </div>
       <div className="shrink-0 text-right">
-        <div className="font-display text-2xl font-semibold tabular-nums">{spot.elo}</div>
-        <div className="text-xs text-ink-soft tabular-nums">
-          {spot.wins}W–{spot.losses}L{rate !== null && ` · ${rate}%`}
-        </div>
-        {spot.avgTotal != null && (
-          <div className="text-xs text-ink-soft tabular-nums">
-            ★ {Number(spot.avgTotal).toFixed(1)}/{MAX_SPOT_TOTAL}
-          </div>
+        {spot.avgReview !== null ? (
+          <>
+            <div className="font-display text-2xl font-semibold tabular-nums">
+              {spot.avgReview.toFixed(1)}
+              <span className="text-sm text-ink-soft">/{MAX_SPOT_TOTAL}</span>
+            </div>
+            <div className="text-xs text-ink-soft tabular-nums">
+              {spot.reviewCount} review{spot.reviewCount === 1 ? "" : "s"}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-ink-soft">No reviews yet</div>
         )}
+        {spot.avgWing !== null && <div className="text-xs text-ink-soft tabular-nums">wings avg {spot.avgWing.toFixed(1)}</div>}
       </div>
     </Link>
   );
 }
 
-export function SpotBattleCard({ battle, now }: { battle: SpotBattleListItem; now: Date }) {
-  const aWon = battle.winnerId === battle.a.id;
-  const side = (s: typeof battle.a, won: boolean, delta: number) => (
-    <div className={`flex min-w-0 flex-1 items-center gap-2 ${won ? "" : "opacity-70"}`}>
-      <SpotSpirit seed={s.id} size={44} crowned={won} dazed={!won} className="shrink-0" />
-      <div className="min-w-0">
-        <div className="truncate text-sm font-bold">{s.name}</div>
-        <div className="truncate text-xs text-ink-soft">
-          {s.neighborhood && <>{s.neighborhood} · </>}
-          <EloDelta delta={delta} />
-        </div>
-      </div>
-    </div>
-  );
+export function WarCard({ war, now, viewerId }: { war: WarSummary; now: Date; viewerId?: string | null }) {
+  const joined = !!viewerId && war.memberIds.includes(viewerId);
   return (
-    <Link href={`/spot-battles/${battle.id}`} className="card flex flex-col gap-2 p-3 transition hover:-translate-y-0.5">
-      <div className="flex items-center gap-2">
-        {side(battle.a, aWon, battle.eloDeltaA)}
-        <span className="shrink-0 font-display text-sm font-bold text-sauce">vs</span>
-        {side(battle.b, !aWon, battle.eloDeltaB)}
+    <Link href={`/wars/${war.id}`} className="card group flex flex-col gap-3 p-5 transition hover:-translate-y-0.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-xl font-semibold group-hover:underline">{war.name}</h3>
+          <p className="text-sm text-ink-soft">
+            hosted by {war.hostName}
+            {war.type && (
+              <>
+                {" "}
+                · {war.type.emoji} {war.type.name} only
+              </>
+            )}
+          </p>
+        </div>
+        {war.champion ? (
+          <SpotSpirit seed={war.champion.spotId} size={52} crowned className="shrink-0" />
+        ) : (
+          <span className="shrink-0 text-3xl" aria-hidden>
+            {war.ended ? "🏁" : war.fogOfWar ? "🌫️" : "⚔️"}
+          </span>
+        )}
       </div>
-      <div className="flex items-center justify-between text-xs text-ink-soft">
-        <span>
-          🏮 Spot showdown judged by <b>{battle.userName}</b>
+      <div className="flex flex-wrap gap-1.5">
+        <WarStatus ended={war.ended} endsAt={war.endsAt} now={now} />
+        <span className="chip">🏮 {war.battlegroundCount} battlegrounds</span>
+        <span className="chip">
+          🧑‍🌾 {war.memberCount} judge{war.memberCount === 1 ? "" : "s"}
         </span>
-        <span>{timeAgo(battle.createdAt, now)}</span>
+        {joined && <span className="chip bg-meadow/20! border-meadow/50! text-forest!">✓ You&apos;re in</span>}
       </div>
+      {war.champion ? (
+        <p className="text-sm">
+          👑 <b>{war.champion.name}</b> {war.ended ? "won the war" : "leads the field"}
+        </p>
+      ) : war.ended ? (
+        <p className="text-sm text-ink-soft">Ended without a single scorecard. The spirits are puzzled.</p>
+      ) : (
+        <div className="grid gap-1">
+          <Progress value={war.completion} label="War progress" />
+          <p className="text-xs text-ink-soft">
+            {Math.round(war.completion * 100)}% of battlegrounds judged{war.fogOfWar && " · standings hidden by fog of war"}
+          </p>
+        </div>
+      )}
     </Link>
   );
 }

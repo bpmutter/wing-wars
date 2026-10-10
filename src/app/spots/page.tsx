@@ -13,11 +13,11 @@ export default async function SpotsPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-10">
       <PageHeader eyebrow="🏮 The villages" title="Wing spots">
-        Every tavern, shack and hidden kitchen in the land — ranked by their own showdowns, not just their wings.
+        Every tavern, shack and hidden kitchen in the land — ranked by wars won, then by what people think of the place itself.
       </PageHeader>
       <div className="mb-6 flex flex-wrap gap-3">
         <Link href="/spots/new" className="btn btn-primary">+ Add a spot</Link>
-        <Link href="/battle?mode=spot" className="btn btn-secondary">⚔️ Spot showdown</Link>
+        <Link href="/wars/new" className="btn btn-secondary">🏯 Start a war</Link>
       </div>
       {spots.length === 0 ? (
         <EmptyState title="No spots yet" action={{ href: "/spots/new", label: "Add the first" }} />

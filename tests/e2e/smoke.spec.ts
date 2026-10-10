@@ -1,106 +1,110 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const shots = process.env.SCREENSHOT_DIR;
-const snap = async (page: import("@playwright/test").Page, name: string) => {
+const snap = async (page: Page, name: string) => {
   if (shots) await page.screenshot({ path: `${shots}/${name}.png`, fullPage: true });
 };
+/** Next keeps previous pages mounted but hidden, so only look at what's on screen. */
+const visibleText = (page: Page, text: string | RegExp) => page.getByText(text).filter({ visible: true }).first();
 
-test("a new judge can sign up, battle wings and spots, and run a tournament", async ({ page }) => {
+test("a new judge can start a war, fight it, end it, and join another", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Reigning champion")).toBeVisible();
+  await expect(page.getByText("Latest war champion")).toBeVisible();
   await snap(page, "01-home");
 
   // Sign up
-  await page.goto("/sign-in?next=/battle");
+  await page.goto("/sign-in?next=/wars/new");
   await page.getByRole("button", { name: "Create account" }).click();
   await page.getByLabel("Judge name").fill("Test Taster");
   await page.getByLabel("Email").fill(`taster-${Date.now()}@example.com`);
   await page.getByLabel("Password").fill("supersecret");
-  await snap(page, "02-sign-up");
   await page.getByRole("button", { name: "Join the wars" }).click();
-  await page.waitForURL("**/battle");
+  await page.waitForURL("**/wars/new");
 
-  // Battle
-  await page.getByRole("button", { name: "🎲 Surprise me" }).click();
-  const sliders = page.locator('input[type="range"][name^="a."]');
-  for (let i = 0; i < 5; i++) await sliders.nth(i).fill("9");
-  await expect(page.getByText("by score")).toBeVisible();
-  await page.getByPlaceholder(/blue cheese/).fill("A playwright-certified crunch.");
-  await snap(page, "03-battle-form");
-  await page.getByRole("button", { name: "⚔️ Seal the verdict" }).click();
-  await page.waitForURL(/\/battles\/.+/);
-  await expect(page.getByText("Tale of the tape")).toBeVisible();
-  await expect(page.getByText("A playwright-certified crunch.")).toBeVisible();
-  await snap(page, "04-battle-report");
+  // Declare a war over two spots
+  await page.getByLabel("Name of the war").fill("The Playwright Pepper War");
+  await page.locator("label").filter({ hasText: "The Copper Kettle Tavern" }).click();
+  await page.locator("label").filter({ hasText: "Cloudtop Diner" }).click();
+  await snap(page, "02-new-war");
+  await page.getByRole("button", { name: "🏯 Declare war" }).click();
+  await page.waitForURL(/\/wars\/[^/]+\?started=1/);
+  await expect(page.getByRole("heading", { name: "The Playwright Pepper War" })).toBeVisible();
+  await expect(visibleText(page, "The fog of war hangs over the hills")).toBeVisible();
+  const warUrl = page.url().split("?")[0];
 
-  // Add a spot and a wing
-  await page.goto("/spots/new");
-  await page.getByLabel("Name").fill("Playwright Pub");
-  await page.getByRole("button", { name: "🏮 Add spot" }).click();
-  await page.waitForURL(/\/spots\/.+/);
-  await page.getByLabel("Flavor / name").fill("Headless Hot");
-  await page.getByLabel("Wing type").selectOption({ label: "➕ Something new…" });
-  await page.getByLabel("New wing type").fill("Chromium Chili");
-  await page.getByRole("button", { name: "🍗 Add wing" }).click();
-  await page.waitForURL(/\/wings\/.+/);
-  await expect(page.getByRole("heading", { name: "Headless Hot" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Chromium Chili/ })).toBeVisible();
-  await page.getByRole("button", { name: "📓 Log tasting" }).click();
-  await page.waitForURL(/tasted=1/);
-  await expect(page.getByText("Averaged over 1 scorecard")).toBeVisible();
-  await snap(page, "05-wing");
+  // Fight at the first battleground: the first wing's scorecard is open by default
+  await page.getByRole("link", { name: /Next battleground/ }).click();
+  await page.waitForURL(/\/spots\//);
+  const sliders = page.locator('form input[type="range"][name="crisp"]').first();
+  await sliders.fill("9");
+  await page.getByRole("button", { name: "📜 File scorecard" }).first().click();
+  await page.waitForURL(/saved=/);
+  await expect(visibleText(page, "✅ Your score")).toBeVisible();
 
-  // Review the spot
-  await page.getByRole("link", { name: "Playwright Pub" }).click();
-  await page.waitForURL(/\/spots\/.+/);
-  await page.getByPlaceholder(/Warm lanterns/).fill("Very headless service.");
+  // Review the restaurant itself
+  await page.getByPlaceholder(/Warm lanterns/).fill("Cozy as a hearth.");
   await page.getByRole("button", { name: "🏮 Review this spot" }).click();
   await page.waitForURL(/reviewed=1/);
-  await expect(page.getByText("Averaged over 1 review")).toBeVisible();
-  await expect(page.getByText("Very headless service.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "🏮 Update review" })).toBeVisible();
+  await snap(page, "03-battleground");
 
-  // Wing type leaderboard
-  await page.goto("/types");
-  await page.getByRole("link", { name: /Chromium Chili/ }).click();
-  await expect(page.getByRole("heading", { name: "The best Chromium Chili in the land" })).toBeVisible();
-  await expect(page.getByText("Headless Hot", { exact: true }).filter({ visible: true })).toBeVisible();
+  // Add a brand-new spot straight into the war, then a wing there, and score it
+  await page.goto(warUrl);
+  await page.getByRole("link", { name: "Add a brand-new spot to the war" }).click();
+  await page.getByLabel("Name").fill("Playwright Pub");
+  await page.getByRole("button", { name: "🏮 Add spot" }).click();
+  await page.waitForURL(/\/spots\/[^/]+\?added=1/);
+  await page.getByLabel("Flavor / name").fill("Headless Hot");
+  await page.getByLabel("Wing type").selectOption({ label: "🔥 Buffalo" });
+  await page.getByRole("button", { name: "🍗 Add wing" }).click();
+  await page.waitForURL(/wing=/);
+  await page.getByRole("button", { name: "📜 File scorecard" }).click();
+  await page.waitForURL(/saved=/);
+  await expect(visibleText(page, "✅ Your score")).toBeVisible();
 
-  // Spot showdown
-  await page.goto("/battle?mode=spot");
-  await page.getByRole("button", { name: "🎲 Surprise me" }).click();
-  const spotSliders = page.locator('input[type="range"][name^="b."]');
-  for (let i = 0; i < 5; i++) await spotSliders.nth(i).fill("8");
-  await snap(page, "05b-spot-battle-form");
-  await page.getByRole("button", { name: "⚔️ Seal the verdict" }).click();
-  await page.waitForURL(/\/spot-battles\/.+/);
-  await expect(page.getByRole("heading", { name: / defeats / })).toBeVisible();
-  await expect(page.getByText("Tale of the tape")).toBeVisible();
-  await snap(page, "05c-spot-battle-report");
+  // End the war as host and see the reveal
+  await page.goto(warUrl);
+  await page.getByRole("button", { name: "🏁 End the war now" }).click();
+  await page.getByRole("button", { name: "Yes, end the war" }).click();
+  await page.waitForURL(/revealed=1/);
+  await expect(visibleText(page, "The war is over")).toBeVisible();
+  await expect(visibleText(page, / wins!$/)).toBeVisible();
+  await expect(visibleText(page, "Wing of the War")).toBeVisible();
+  await snap(page, "04-war-results");
 
-  // Tournament
-  await page.goto("/tournament");
-  await page.getByRole("button", { name: "4 wings" }).click();
-  await page.getByRole("button", { name: "🎲 Fill randomly" }).click();
-  await snap(page, "06-tournament-setup");
-  await page.getByRole("button", { name: "🏯 Begin (seeded by rating)" }).click();
-  for (let i = 0; i < 3; i++) {
-    await expect(page.getByText("Which wing wins?")).toBeVisible();
-    if (i === 1) await snap(page, "07-tournament-match");
-    await page.locator("section").filter({ hasText: "Which wing wins?" }).getByRole("button").first().click();
+  // Join someone else's war (the seeded live-scoreboard one)
+  await page.goto("/wars");
+  await snap(page, "05-wars");
+  await page.getByRole("link", { name: /The Lantern Festival Skirmish/ }).click();
+  await expect(visibleText(page, "Live standings")).toBeVisible();
+  await page.getByRole("button", { name: "⚔️ Join this war" }).click();
+  await page.waitForURL(/joined=1/);
+  await expect(visibleText(page, "Your campaign")).toBeVisible();
+  await snap(page, "06-live-war");
+
+  // Solo review of a wing, outside any war
+  await page.goto("/wings");
+  await page.getByRole("link", { name: /Lemon Pepper Wet/ }).first().click();
+  await page.getByPlaceholder(/Crackly skin/).fill("Bright as a spring morning.");
+  await page.getByRole("button", { name: "📓 Save review" }).click();
+  await page.waitForURL(/tasted=1/);
+  await expect(visibleText(page, "Bright as a spring morning.")).toBeVisible();
+
+  // Hall of Fame
+  for (const [board, heading] of [
+    ["", "The rest of the field"],
+    ["?board=spots", "The rest of the villages"],
+    ["?board=types", "Best in type"],
+    ["?board=champions", "Every concluded war"],
+  ] as const) {
+    await page.goto(`/leaderboard${board}`);
+    await expect(visibleText(page, heading)).toBeVisible();
   }
-  await expect(page.getByText("is champion!")).toBeVisible();
-  await page.getByRole("button", { name: "📜 Save to the chronicle" }).click();
-  await page.waitForURL(/\/tournaments\/.+/);
-  await expect(page.getByText("👑 Champion")).toBeVisible();
-  await snap(page, "08-tournament-result");
-
   await page.goto("/leaderboard");
-  await expect(page.getByRole("heading", { name: "Leaderboard" })).toBeVisible();
-  await snap(page, "09-leaderboard");
-  await page.goto("/leaderboard?board=spots");
-  await expect(page.getByText("Spot ranks")).toBeVisible();
-  await snap(page, "10-leaderboard-spots");
-  await page.goto("/leaderboard?board=types");
-  await expect(page.getByRole("columnheader", { name: "vs other types" })).toBeVisible();
-  await snap(page, "11-leaderboard-types");
+  await snap(page, "07-hall-of-fame");
+
+  // The seeded Buffalo war is still under fog for outsiders
+  await page.goto("/wars");
+  await page.getByRole("link", { name: /The Spring Buffalo War/ }).click();
+  await expect(visibleText(page, "The fog of war hangs over the hills")).toBeVisible();
 });
