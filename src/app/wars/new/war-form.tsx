@@ -74,8 +74,9 @@ export function WarForm({ spots, types, defaultEndsOn }: { spots: SpotOption[]; 
           <span>
             <span className="font-bold">🌫️ Fog of war</span>
             <span className="block text-sm text-ink-soft">
-              Keep the standings hidden until the war ends, so nobody gets swayed by the scoreboard. Everyone sees
-              the grand reveal together. (Recommended.)
+              Each battle&apos;s scores stay hidden from a judge until they&apos;ve judged it themselves, so nobody gets
+              swayed before they eat. The overall standings and honors are revealed to everyone when the war ends.
+              (Recommended.)
             </span>
           </span>
         </label>

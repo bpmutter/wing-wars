@@ -32,14 +32,23 @@ test("a new judge can start a war, fight it, end it, and join another", async ({
   await expect(visibleText(page, "The fog of war hangs over the hills")).toBeVisible();
   const warUrl = page.url().split("?")[0];
 
-  // Fight at the first battleground: the first wing's scorecard is open by default
+  // Fight at the first battleground: it's fogged until we judge it, then it opens up
   await page.getByRole("link", { name: /Next battleground/ }).click();
   await page.waitForURL(/\/spots\//);
+  await expect(visibleText(page, "This battle is still in the fog for you.")).toBeVisible();
   const sliders = page.locator('form input[type="range"][name="crisp"]').first();
   await sliders.fill("9");
   await page.getByRole("button", { name: "📜 File scorecard" }).first().click();
   await page.waitForURL(/saved=/);
   await expect(visibleText(page, "✅ Your score")).toBeVisible();
+  await expect(visibleText(page, "What the judges thought")).toBeVisible();
+  await expect(page.getByText("This battle is still in the fog for you.").filter({ visible: true })).toHaveCount(0);
+
+  // The war page now lists it among "your revealed battles"; the others stay fogged
+  await page.goto(warUrl);
+  await expect(visibleText(page, "Battles you've revealed")).toBeVisible();
+  await expect(visibleText(page, /1 battle is still in the fog for you/)).toBeVisible();
+  await page.goBack();
 
   // Review the restaurant itself
   await page.getByPlaceholder(/Warm lanterns/).fill("Cozy as a hearth.");

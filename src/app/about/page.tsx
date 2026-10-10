@@ -34,9 +34,12 @@ export default function AboutPage() {
         <section className="card p-6">
           <h2 className="text-2xl font-semibold">🌫️ Fog of war</h2>
           <p className="mt-2">
-            By default the standings stay hidden until the war ends, so nobody is swayed by the scoreboard and
-            everyone gets the grand reveal together. The host can turn the fog off for a live scoreboard instead.
-            A war ends on its end date, or when the host ends it early.
+            By default, each battle is shrouded until you&apos;ve judged it yourself. Once you file a scorecard at a
+            battleground, its fog lifts for you: you see its score, every wing&apos;s average and what the other judges
+            thought. You can&apos;t peek before you eat, so nobody copies the crowd. The overall standings and honors stay
+            hidden from everyone until the war ends, then are revealed all at once. Scorecards from a fogged war
+            also stay out of the Hall of Fame and everyone&apos;s journals until it ends. The host can turn the fog off
+            for a fully live scoreboard instead. A war ends on its end date, or when the host ends it early.
           </p>
         </section>
 

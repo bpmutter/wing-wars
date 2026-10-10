@@ -24,8 +24,11 @@ A **war** is the heart of the app.
 3. **Each restaurant is a battle.** At each battleground, a judge scores every wing they eat on the five elements.
    They can update their scores until the war ends, and can also optionally review the restaurant itself.
    Members can add more battlegrounds while the war is on, including brand-new spots.
-4. **The fog of war** (on by default) hides the standings until the end, so nobody's swayed by the scoreboard
-   and everyone gets the reveal together. Hosts can turn it off for a live scoreboard.
+4. **The fog of war** (on by default) keeps each battle hidden from you until you've judged it yourself. Once you
+   file a scorecard at a battleground, its fog lifts for you: you see its score, each wing's average, and every
+   judge's vote and notes. You can't peek before you eat, so nobody copies the crowd. The overall standings and
+   honors stay hidden from everyone until the war ends, then are revealed together. Fogged scorecards also
+   stay out of the Hall of Fame and judges' journals until then. Hosts can turn the fog off for a live scoreboard.
 5. **The war ends** on its end date, or when the host ends it early. Then the champion is revealed.
 
 ### 👑 How the winner is computed
@@ -93,7 +96,7 @@ if the database is empty, seeds a small demo world: 7 spots, 22 wings across 13 
 three wars:
 
 - **The Harvest Moon Wing War**: concluded, so you can see a full results reveal.
-- **The Spring Buffalo War**: Buffalo only, under fog of war. The demo judge is a member, partway through.
+- **The Spring Buffalo War**: Buffalo only, under fog of war. The demo judge is a member partway through, so some battles are revealed to them and some are still fogged.
 - **The Lantern Festival Skirmish**: fog off, with a live scoreboard. The demo judge hasn't joined it yet.
 
 **Demo login:** `demo@wingwars.local` / `wingwars`. You can also create your own account on the sign-in page

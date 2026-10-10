@@ -7,6 +7,7 @@ import { EmptyState, LeafShower, SectionTitle, StatPill, WarStatus } from "@/com
 import { SubmitButton } from "@/components/form-bits";
 import { SpotSpirit } from "@/components/spot-spirit";
 import { getBattleground, wingTypeOptions } from "@/lib/queries";
+import { MAX_TOTAL } from "@/lib/scoring";
 import { getCurrentUser } from "@/lib/session";
 import { ReviewForm } from "@/app/spots/[id]/review-form";
 import { WingForm } from "@/app/spots/[id]/wing-form";
@@ -21,7 +22,7 @@ export default async function BattlegroundPage({ params, searchParams }: PagePro
   const viewer = await getCurrentUser();
   const data = await getBattleground(id, spotId, viewer?.id ?? null);
   if (!data) notFound();
-  const { war, spot, ended, visible, isMember, wings } = data;
+  const { war, spot, ended, visible, revealed, isMember, wings } = data;
   const now = new Date();
   const canScore = isMember && !ended;
   const scoredIds = new Set(data.myCards.map((c) => c.wingId));
@@ -70,7 +71,13 @@ export default async function BattlegroundPage({ params, searchParams }: PagePro
           <div className="mt-5 grid grid-cols-3 gap-3">
             <StatPill label="Judges here" value={`${data.judges}/${data.memberCount}`} />
             <StatPill label="You scored" value={`${scoredIds.size}/${wings.length}`} />
-            <StatPill label="Standing" value={data.standing?.place ? `#${data.standing.place}` : visible ? "—" : "🌫️"} />
+            {data.standing?.place ? (
+              <StatPill label="Standing" value={`#${data.standing.place}`} />
+            ) : data.standing?.rawAvg != null ? (
+              <StatPill label="Judges' avg" value={data.standing.rawAvg.toFixed(1)} />
+            ) : (
+              <StatPill label="Judges' avg" value={revealed ? "—" : "🌫️"} />
+            )}
           </div>
           <p className="mt-4 text-sm">
             <Link className="link" href={`/spots/${spot.id}`}>
@@ -123,6 +130,60 @@ export default async function BattlegroundPage({ params, searchParams }: PagePro
                   />
                 );
               })}
+            </div>
+          )}
+          {!revealed && (
+            <div className="card mt-4 flex items-center gap-3 p-5">
+              <span className="text-3xl" aria-hidden>
+                🌫️
+              </span>
+              <p className="text-sm">
+                <b>This battle is still in the fog for you.</b> File a scorecard here and it lifts: you&apos;ll see the
+                battle&apos;s score, each wing&apos;s average and what the other judges thought.
+              </p>
+            </div>
+          )}
+          {data.votes && data.votes.length > 0 && (
+            <div className="mt-8">
+              <SectionTitle>What the judges thought</SectionTitle>
+              {!visible && (
+                <p className="-mt-2 mb-4 text-sm text-ink-soft">
+                  The fog has lifted on this battle because you&apos;ve judged it. Its place in the war is revealed when the
+                  war ends.
+                </p>
+              )}
+              <ul className="grid gap-3">
+                {data.votes.map((v) => (
+                  <li key={v.userId} className="card p-4">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <Link href={`/judges/${v.userId}`} className="link font-bold">
+                        {v.userId === viewer?.id ? "You" : v.name}
+                      </Link>
+                      <span className="font-display text-xl font-semibold tabular-nums">
+                        {v.vote.toFixed(1)}
+                        <span className="text-xs text-ink-soft">/{MAX_TOTAL}</span>
+                      </span>
+                    </div>
+                    {v.notes.map((n, i) => (
+                      <p key={i} className="mt-1 text-sm italic">
+                        “{n}”
+                      </p>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+              {data.standing?.rawAvg != null && (
+                <p className="mt-2 text-xs text-ink-soft">
+                  Judges&apos; average: {data.standing.rawAvg.toFixed(1)}/{MAX_TOTAL}.
+                  {visible && data.standing.score != null && (
+                    <>
+                      {" "}
+                      In the war standings it counts as {data.standing.score.toFixed(1)}, after blending with a few
+                      imaginary average judges so a lightly-visited battle can&apos;t swing the war.
+                    </>
+                  )}
+                </p>
+              )}
             </div>
           )}
           {canScore && (

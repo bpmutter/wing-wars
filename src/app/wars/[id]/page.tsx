@@ -116,17 +116,13 @@ export default async function WarPage({ params, searchParams }: PageProps<"/wars
           neighborhoods={new Map(battlegrounds.map((b) => [b.spotId, b.neighborhood]))}
         />
       ) : (
-        <section className="card relative mt-6 overflow-hidden p-8 text-center">
-          <div className="text-5xl" aria-hidden>
-            🌫️
-          </div>
-          <h2 className="mt-2 text-2xl font-semibold">The fog of war hangs over the hills</h2>
-          <p className="mx-auto mt-2 max-w-xl text-ink-soft">
-            Standings stay hidden until the war ends
-            {endTime ? <> on <b className="text-ink">{fmtDate(endTime)}</b></> : <> (the host decides when)</>}, so
-            nobody&apos;s swayed by the scoreboard. Then the champion is revealed to everyone at once.
-          </p>
-        </section>
+        <FogReport
+          warId={war.id}
+          revealed={battlegrounds.filter((b) => b.revealed && b.standing)}
+          hidden={battlegrounds.length - battlegrounds.filter((b) => b.revealed).length}
+          wings={data.wings}
+          endLabel={endTime ? fmtDate(endTime) : null}
+        />
       )}
 
       <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_20rem]">
@@ -151,9 +147,17 @@ export default async function WarPage({ params, searchParams }: PageProps<"/wars
                 <div className="shrink-0 text-right">
                   {b.standing?.place ? (
                     <div className="font-display text-2xl font-semibold">#{b.standing.place}</div>
-                  ) : visible ? (
+                  ) : b.standing?.rawAvg != null ? (
+                    <div className="font-display text-xl font-semibold tabular-nums" title="Judges' average — revealed to you because you've judged it">
+                      {b.standing.rawAvg.toFixed(1)}
+                    </div>
+                  ) : b.revealed ? (
                     <div className="text-xs text-ink-soft">unjudged</div>
-                  ) : null}
+                  ) : (
+                    <div className="text-xl" title="In the fog — judge it to reveal its scores">
+                      🌫️
+                    </div>
+                  )}
                   {isMember && <div className="text-sm">{b.viewerJudged ? "✅" : "⏳"}</div>}
                 </div>
               </Link>
@@ -197,6 +201,83 @@ export default async function WarPage({ params, searchParams }: PageProps<"/wars
         </aside>
       </div>
     </div>
+  );
+}
+
+type WarData = NonNullable<Awaited<ReturnType<typeof getWar>>>;
+
+/**
+ * Under fog of war: the battles you've judged are revealed to you (scores only —
+ * places and honors wait for the end); the rest stay in the mist.
+ */
+function FogReport({
+  warId,
+  revealed,
+  hidden,
+  wings,
+  endLabel,
+}: {
+  warId: string;
+  revealed: WarData["battlegrounds"];
+  hidden: number;
+  wings: WarData["wings"];
+  endLabel: string | null;
+}) {
+  // Plain judges' averages here: the adjusted war score depends on every battle,
+  // including the ones still in the fog, so it waits for the end of the war.
+  const sorted = [...revealed].sort((a, b) => (b.standing?.rawAvg ?? 0) - (a.standing?.rawAvg ?? 0));
+  return (
+    <section className="card relative mt-6 overflow-hidden p-6 sm:p-8">
+      <div className="text-center">
+        <div className="text-5xl" aria-hidden>
+          🌫️
+        </div>
+        <h2 className="mt-2 text-2xl font-semibold">The fog of war hangs over the hills</h2>
+        <p className="mx-auto mt-2 max-w-xl text-ink-soft">
+          Each battle&apos;s scores are revealed to you once you&apos;ve judged it yourself, so nobody&apos;s swayed before
+          they eat. The final standings and honors are revealed to everyone when the war ends
+          {endLabel ? (
+            <>
+              {" "}
+              on <b className="text-ink">{endLabel}</b>
+            </>
+          ) : (
+            " (the host decides when)"
+          )}
+          .
+        </p>
+      </div>
+      {sorted.length > 0 && (
+        <div className="mx-auto mt-6 max-w-2xl">
+          <h3 className="mb-2 text-sm font-bold uppercase tracking-wider text-sauce">Battles you&apos;ve revealed</h3>
+          <ul className="divide-y divide-line rounded-2xl border border-line bg-paper">
+            {sorted.map((b) => (
+              <li key={b.spotId}>
+                <Link href={`/wars/${warId}/spots/${b.spotId}`} className="flex items-center gap-3 px-4 py-3 hover:bg-paper-2">
+                  <SpotSpirit seed={b.spotId} size={36} className="shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-bold">{b.name}</div>
+                    <div className="truncate text-xs text-ink-soft">
+                      {b.standing!.judges} judge{b.standing!.judges === 1 ? "" : "s"}
+                      {b.standing!.bestWingId && wings.get(b.standing!.bestWingId) && <> · best wing so far: {wings.get(b.standing!.bestWingId)!.name}</>}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="font-display text-xl font-semibold tabular-nums">{b.standing!.rawAvg!.toFixed(1)}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-ink-soft">judges&apos; avg</div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {hidden > 0 && (
+            <p className="mt-2 text-center text-sm text-ink-soft">
+              🌫️ {hidden} battle{hidden === 1 ? " is" : "s are"} still in the fog for you.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

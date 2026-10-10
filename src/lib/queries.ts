@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { spotReviews, spots, tastings, user, warBattlegrounds, warMembers, wars, wingTypes, wings } from "@/db/schema";
 import { average, spotAverage, type Scores, type SpotScores } from "./scoring";
 import { computeWarResults, PRIOR_WEIGHT } from "./war-results";
-import { resultsVisible, warEnded } from "./wars";
+import { battleVisible, resultsVisible, warEnded } from "./wars";
 
 /*
  * Rankings everywhere use a Bayesian average (see war-results.ts) so that a
@@ -14,23 +14,36 @@ import { resultsVisible, warEnded } from "./wars";
 const wingTotal = sql<number>`(${tastings.crisp} + ${tastings.sauce} + ${tastings.juiciness} + ${tastings.heat} + ${tastings.value})`;
 const reviewTotal = sql<number>`(${spotReviews.wingGame} + ${spotReviews.sides} + ${spotReviews.vibe} + ${spotReviews.service} + ${spotReviews.value})`;
 
-const tastingStats = db
-  .select({
-    wingId: tastings.wingId,
-    tastingCount: count().as("tasting_count"),
-    sumTotal: sql<number>`sum(${wingTotal})`.as("sum_total"),
-  })
-  .from(tastings)
-  .groupBy(tastings.wingId)
-  .as("ts");
+/**
+ * Scorecards from a war still under fog of war stay out of every public view
+ * (wing pages, judge journals, the Hall of Fame) until the war ends — otherwise
+ * the fog would be easy to peek around. They're only shown inside the war itself.
+ */
+function unfogged(table: "tastings" | "spot_reviews") {
+  const warId = sql.raw(`"${table}"."war_id"`);
+  return sql`(${warId} is null or exists (select 1 from wars fw where fw.id = ${warId} and (fw.fog_of_war = 0 or fw.ended_at is not null or (fw.ends_at is not null and fw.ends_at <= ${Date.now()}))))`;
+}
+
+function tastingStatsQuery() {
+  return db
+    .select({
+      wingId: tastings.wingId,
+      tastingCount: count().as("tasting_count"),
+      sumTotal: sql<number>`sum(${wingTotal})`.as("sum_total"),
+    })
+    .from(tastings)
+    .where(unfogged("tastings"))
+    .groupBy(tastings.wingId)
+    .as("ts");
+}
 
 async function globalWingMean() {
-  const [row] = await db.select({ m: sql<number | null>`avg(${wingTotal})` }).from(tastings);
+  const [row] = await db.select({ m: sql<number | null>`avg(${wingTotal})` }).from(tastings).where(unfogged("tastings"));
   return Number(row?.m ?? 30);
 }
 
 async function globalReviewMean() {
-  const [row] = await db.select({ m: sql<number | null>`avg(${reviewTotal})` }).from(spotReviews);
+  const [row] = await db.select({ m: sql<number | null>`avg(${reviewTotal})` }).from(spotReviews).where(unfogged("spot_reviews"));
   return Number(row?.m ?? 30);
 }
 
@@ -47,6 +60,7 @@ export async function listWings(opts: { sort?: "top" | "new" | "tasted"; typeId?
   const filters = [];
   if (opts.typeId) filters.push(eq(wings.wingTypeId, opts.typeId));
   if (opts.spotId) filters.push(eq(wings.spotId, opts.spotId));
+  const tastingStats = tastingStatsQuery();
   const [rows, prior] = await Promise.all([
     db
       .select({
@@ -103,7 +117,7 @@ export async function getWing(id: string) {
     .from(tastings)
     .innerJoin(user, eq(tastings.userId, user.id))
     .leftJoin(wars, eq(tastings.warId, wars.id))
-    .where(eq(tastings.wingId, id))
+    .where(and(eq(tastings.wingId, id), unfogged("tastings")))
     .orderBy(desc(tastings.createdAt));
 
   const all = await listWings();
@@ -131,6 +145,7 @@ export async function listSpots(opts: { limit?: number } = {}) {
   const reviewStats = db
     .select({ spotId: spotReviews.spotId, n: count().as("review_count"), sum: sql<number>`sum(${reviewTotal})`.as("review_sum") })
     .from(spotReviews)
+    .where(unfogged("spot_reviews"))
     .groupBy(spotReviews.spotId)
     .as("rs");
   const wingStats = db
@@ -141,7 +156,7 @@ export async function listSpots(opts: { limit?: number } = {}) {
       avgWing: sql<number | null>`avg(${wingTotal})`.as("avg_wing"),
     })
     .from(wings)
-    .leftJoin(tastings, eq(tastings.wingId, wings.id))
+    .leftJoin(tastings, and(eq(tastings.wingId, wings.id), unfogged("tastings")))
     .groupBy(wings.spotId)
     .as("ws");
 
@@ -195,7 +210,7 @@ export async function getSpot(id: string) {
       .from(spotReviews)
       .innerJoin(user, eq(spotReviews.userId, user.id))
       .leftJoin(wars, eq(spotReviews.warId, wars.id))
-      .where(eq(spotReviews.spotId, id))
+      .where(and(eq(spotReviews.spotId, id), unfogged("spot_reviews")))
       .orderBy(desc(spotReviews.createdAt)),
     db
       .select({ id: wars.id })
@@ -376,7 +391,11 @@ export async function listWars() {
   };
 }
 
-/** The full war page: everything, with results hidden behind the fog unless visible. */
+/**
+ * The full war page. Under fog of war, the overall results stay hidden until
+ * the war ends, but each battleground the viewer has judged is revealed to them
+ * (its score, without its overall place, which would leak the others).
+ */
 export async function getWar(id: string, viewerId: string | null) {
   const w = await loadWar(id);
   if (!w) return null;
@@ -409,12 +428,18 @@ export async function getWar(id: string, viewerId: string | null) {
       ...m,
       judged: w.results.judges.find((j) => j.userId === m.userId)?.battlegroundsJudged ?? 0,
     })),
-    battlegrounds: w.grounds.map((g) => ({
-      ...g,
-      judges: judgedBy(g.spotId).size,
-      viewerJudged: viewerJudged.has(g.spotId),
-      standing: visible ? (w.results.standings.find((s) => s.spotId === g.spotId) ?? null) : null,
-    })),
+    battlegrounds: w.grounds.map((g) => {
+      const revealed = battleVisible(w.war, viewerJudged.has(g.spotId), now);
+      const standing = w.results.standings.find((s) => s.spotId === g.spotId) ?? null;
+      return {
+        ...g,
+        judges: judgedBy(g.spotId).size,
+        viewerJudged: viewerJudged.has(g.spotId),
+        revealed,
+        // Under fog, only this battle's own numbers: no place, and no adjusted score (it depends on the hidden battles).
+        standing: revealed && standing ? { ...standing, place: visible ? standing.place : null, score: visible ? standing.score : null } : null,
+      };
+    }),
     viewerProgress: viewerJudged.size,
     scorecardCount: w.cards.length,
     results: visible ? w.results : null,
@@ -440,18 +465,33 @@ export async function getBattleground(warId: string, spotId: string, viewerId: s
   const myCards = viewerId ? here.filter((c) => c.tasting.userId === viewerId).map((c) => c.tasting) : [];
   const myReview = viewerId ? (w.reviews.find((r) => r.spotId === spotId && r.userId === viewerId) ?? null) : null;
 
-  // Per-wing war averages at this battleground (only shown when results are visible).
+  // Per-wing war averages at this battleground (only shown once the fog lifts for this viewer).
   const wingAverages = new Map<string, { avg: number; judges: number }>();
   for (const x of eligible) {
     const list = here.filter((c) => c.tasting.wingId === x.id).map((c) => c.tasting);
     if (list.length) wingAverages.set(x.id, { avg: list.reduce((s, t) => s + t.crisp + t.sauce + t.juiciness + t.heat + t.value, 0) / list.length, judges: list.length });
   }
 
+  const revealed = battleVisible(w.war, myCards.length > 0, now);
+  const standing = w.results.standings.find((s) => s.spotId === spotId) ?? null;
+  const memberName = new Map(w.members.map((m) => [m.userId, m.name]));
+  // Each judge's single vote here, plus their notes — the battle laid bare.
+  const votes = w.results.judges
+    .map((j) => ({ userId: j.userId, vote: j.ranking.find((r) => r.spotId === spotId)?.score ?? null }))
+    .filter((j): j is { userId: string; vote: number } => j.vote !== null)
+    .map((j) => ({
+      ...j,
+      name: memberName.get(j.userId) ?? "A judge",
+      notes: here.filter((c) => c.tasting.userId === j.userId && c.tasting.notes).map((c) => c.tasting.notes),
+    }))
+    .sort((a, b) => b.vote - a.vote);
+
   return {
     war: w.war,
     type: w.type,
     ended: warEnded(w.war, now),
     visible,
+    revealed,
     isMember: !!viewerId && w.members.some((m) => m.userId === viewerId),
     spot,
     index,
@@ -464,8 +504,9 @@ export async function getBattleground(warId: string, spotId: string, viewerId: s
     myReview,
     judges: new Set(here.map((c) => c.tasting.userId)).size,
     memberCount: w.members.length,
-    standing: visible ? (w.results.standings.find((s) => s.spotId === spotId) ?? null) : null,
-    wingAverages: visible ? wingAverages : null,
+    standing: revealed && standing ? { ...standing, place: visible ? standing.place : null, score: visible ? standing.score : null } : null,
+    wingAverages: revealed ? wingAverages : null,
+    votes: revealed ? votes : null,
   };
 }
 
@@ -495,14 +536,14 @@ export async function getJudge(userId: string) {
       .innerJoin(wings, eq(tastings.wingId, wings.id))
       .innerJoin(spots, eq(wings.spotId, spots.id))
       .leftJoin(wars, eq(tastings.warId, wars.id))
-      .where(eq(tastings.userId, userId))
+      .where(and(eq(tastings.userId, userId), unfogged("tastings")))
       .orderBy(desc(tastings.createdAt))
       .limit(60),
     db
       .select({ review: spotReviews, spotName: spots.name })
       .from(spotReviews)
       .innerJoin(spots, eq(spotReviews.spotId, spots.id))
-      .where(eq(spotReviews.userId, userId))
+      .where(and(eq(spotReviews.userId, userId), unfogged("spot_reviews")))
       .orderBy(desc(spotReviews.createdAt))
       .limit(40),
     db.select({ warId: warMembers.warId }).from(warMembers).where(eq(warMembers.userId, userId)),
@@ -522,7 +563,7 @@ export async function topJudges(limit = 5) {
   return db
     .select({ id: user.id, name: user.name, scorecards: count(tastings.id) })
     .from(user)
-    .innerJoin(tastings, eq(tastings.userId, user.id))
+    .innerJoin(tastings, and(eq(tastings.userId, user.id), unfogged("tastings")))
     .groupBy(user.id)
     .orderBy(desc(count(tastings.id)))
     .limit(limit);

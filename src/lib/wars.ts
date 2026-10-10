@@ -15,6 +15,16 @@ export function resultsVisible(war: WarTiming, now = new Date()) {
   return warEnded(war, now) || !war.fogOfWar;
 }
 
+/**
+ * Whether one battleground's scores are visible to a viewer. Under fog of war,
+ * each battle lifts its fog for you once you've filed a scorecard there, so you
+ * can't be swayed by the crowd before you've judged it yourself. The overall
+ * standings and honors still wait for the end of the war.
+ */
+export function battleVisible(war: WarTiming, viewerJudgedIt: boolean, now = new Date()) {
+  return resultsVisible(war, now) || viewerJudgedIt;
+}
+
 export function timeLeft(endsAt: Date, now = new Date()) {
   const ms = endsAt.getTime() - now.getTime();
   if (ms <= 0) return "ended";
