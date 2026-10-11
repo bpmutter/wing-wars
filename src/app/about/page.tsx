@@ -27,7 +27,8 @@ export default function AboutPage() {
           </p>
           <p className="mt-3">
             Over the following days or weeks, every judge visits as many battlegrounds as they can and files a
-            scorecard for each wing they eat. You can update your scorecards until the war ends.
+            scorecard for each wing they eat. <b>All scores are final</b>: once a scorecard is filed it can&apos;t be edited
+            or deleted, so judge it before you submit.
           </p>
         </section>
 

@@ -22,7 +22,8 @@ A **war** is the heart of the app.
    or only one type (*"The Spring Buffalo War"*), and set an optional end date.
 2. **People join** by opening the war's link. There are no teams; every member is a judge.
 3. **Each restaurant is a battle.** At each battleground, a judge scores every wing they eat on the five elements.
-   They can update their scores until the war ends, and can also optionally review the restaurant itself.
+   **All scores are final**: once a scorecard is filed it can't be edited or deleted (the server refuses a second one
+   for the same wing in the same war). They can also optionally review the restaurant itself, which is final too.
    Members can add more battlegrounds while the war is on, including brand-new spots.
 4. **The fog of war** (on by default) keeps each battle hidden from you until you've judged it yourself. Once you
    file a scorecard at a battleground, its fog lifts for you: you see its score, each wing's average, and every

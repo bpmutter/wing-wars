@@ -38,9 +38,15 @@ test("a new judge can start a war, fight it, end it, and join another", async ({
   await expect(visibleText(page, "This battle is still in the fog for you.")).toBeVisible();
   const sliders = page.locator('form input[type="range"][name="crisp"]').first();
   await sliders.fill("9");
-  await page.getByRole("button", { name: "📜 File scorecard" }).first().click();
+  await expect(visibleText(page, "All scores are final.")).toBeVisible();
+  await page.getByRole("button", { name: "📜 File final scorecard" }).first().click();
   await page.waitForURL(/saved=/);
   await expect(visibleText(page, "✅ Your score")).toBeVisible();
+  // Scores are final: the card is locked, with a tooltip, and offers no way to edit
+  await expect(page.getByText("🔒 Final").filter({ visible: true }).first()).toBeVisible();
+  await page.getByText("🔒 Final").filter({ visible: true }).first().hover();
+  await expect(page.getByRole("tooltip").filter({ visible: true }).first()).toContainText("All scores are final");
+  await expect(page.getByRole("button", { name: /Change my scores|Update scorecard/ })).toHaveCount(0);
   await expect(visibleText(page, "What the judges thought")).toBeVisible();
   await expect(page.getByText("This battle is still in the fog for you.").filter({ visible: true })).toHaveCount(0);
 
@@ -52,9 +58,10 @@ test("a new judge can start a war, fight it, end it, and join another", async ({
 
   // Review the restaurant itself
   await page.getByPlaceholder(/Warm lanterns/).fill("Cozy as a hearth.");
-  await page.getByRole("button", { name: "🏮 Review this spot" }).click();
+  await page.getByRole("button", { name: "🔒 File final review" }).click();
   await page.waitForURL(/reviewed=1/);
-  await expect(page.getByRole("button", { name: "🏮 Update review" })).toBeVisible();
+  await expect(visibleText(page, "✅ You reviewed Cloudtop Diner")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Update review|File final review/ })).toHaveCount(0);
   await snap(page, "03-battleground");
 
   // Add a brand-new spot straight into the war, then a wing there, and score it
@@ -67,7 +74,7 @@ test("a new judge can start a war, fight it, end it, and join another", async ({
   await page.getByLabel("Wing type").selectOption({ label: "🔥 Buffalo" });
   await page.getByRole("button", { name: "🍗 Add wing" }).click();
   await page.waitForURL(/wing=/);
-  await page.getByRole("button", { name: "📜 File scorecard" }).click();
+  await page.getByRole("button", { name: "📜 File final scorecard" }).click();
   await page.waitForURL(/saved=/);
   await expect(visibleText(page, "✅ Your score")).toBeVisible();
 

@@ -140,3 +140,36 @@ export function WarStatus({ ended, endsAt, now }: { ended: boolean; endsAt: Date
     </span>
   );
 }
+
+/** Marks a filed war scorecard as locked, with a tooltip explaining why. */
+export function FinalBadge({ what = "score" }: { what?: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <span
+        tabIndex={0}
+        className="chip cursor-help bg-forest/10! border-forest/40! text-forest! focus-visible:outline-2 focus-visible:outline-honey"
+        aria-label={`Final: this ${what} can't be edited or deleted`}
+      >
+        🔒 Final
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute right-0 bottom-full z-20 mb-2 w-56 rounded-xl bg-ink px-3 py-2 text-left text-xs font-normal leading-snug text-paper opacity-0 shadow-lg transition group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        All scores are final. Once filed, a {what} can&apos;t be edited or deleted, so judge it before you submit.
+      </span>
+    </span>
+  );
+}
+
+/** A heads-up shown before submitting a war scorecard or review. */
+export function FinalNotice({ what = "scorecard" }: { what?: string }) {
+  return (
+    <p className="flex items-start gap-2 rounded-xl border border-honey/60 bg-honey/15 px-3 py-2 text-sm">
+      <span aria-hidden>🔒</span>
+      <span>
+        <b>All scores are final.</b> Once you file this {what}, you can&apos;t edit or delete it.
+      </span>
+    </p>
+  );
+}

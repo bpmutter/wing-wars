@@ -107,7 +107,8 @@ export default async function BattlegroundPage({ params, searchParams }: PagePro
         <section>
           <SectionTitle>{data.type ? `The ${data.type.name} wings here` : "The wings here"}</SectionTitle>
           <p className="-mt-2 mb-4 text-sm text-ink-soft">
-            Score every wing you eat. Your scorecards here are averaged into this battleground&apos;s score.
+            Score every wing you eat. Your scorecards here are averaged into this battleground&apos;s score.{" "}
+            <b>All scores are final</b> — once filed, a scorecard can&apos;t be edited or deleted.
             {data.otherWingCount > 0 && ` (${data.otherWingCount} other wing${data.otherWingCount === 1 ? "" : "s"} here don't count in this war.)`}
           </p>
           {wings.length === 0 ? (
@@ -200,7 +201,7 @@ export default async function BattlegroundPage({ params, searchParams }: PagePro
           <SectionTitle>The restaurant itself</SectionTitle>
           <p className="-mt-2 mb-4 text-sm text-ink-soft">
             Optional. Rate the whole visit: dips, vibe, service. It doesn&apos;t decide the war, but it crowns the war&apos;s
-            Best Hangout.
+            Best Hangout. Like every score, it&apos;s final once filed.
           </p>
           <div className="card p-6">
             {canScore ? (

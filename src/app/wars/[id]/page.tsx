@@ -99,7 +99,7 @@ export default async function WarPage({ params, searchParams }: PageProps<"/wars
           </div>
           <Progress value={battlegrounds.length ? data.viewerProgress / battlegrounds.length : 0} label="Your progress" />
           {!ended && data.viewerProgress === battlegrounds.length && battlegrounds.length > 0 && (
-            <p className="mt-3 text-sm font-bold text-forest">🌟 You&apos;ve judged every battleground. Rest now, brave eater — you can still update your scores until the war ends.</p>
+            <p className="mt-3 text-sm font-bold text-forest">🌟 You&apos;ve judged every battleground. Rest now, brave eater — your scorecards are final.</p>
           )}
         </section>
       )}

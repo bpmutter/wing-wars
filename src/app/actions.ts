@@ -263,7 +263,7 @@ const warScorecardSchema = scoresSchema.extend({
   notes: trimmed(500).default(""),
 });
 
-/** Files (or updates) your scorecard for one wing in one war. */
+/** Files your scorecard for one wing in one war. Scorecards are final: a second one is refused. */
 export async function submitWarScorecard(_: FormState, form: FormData): Promise<FormState> {
   const user = await mustUser();
   const parsed = warScorecardSchema.safeParse(Object.fromEntries(form));
@@ -277,11 +277,12 @@ export async function submitWarScorecard(_: FormState, form: FormData): Promise<
   if (!(await isBattleground(warId, wing.spotId))) return fail("That spot isn't part of this war.");
   if (check.war.wingTypeId && wing.wingTypeId !== check.war.wingTypeId) return fail("Only wings of this war's type count.");
 
-  const now = new Date();
-  await db
+  const filed = await db
     .insert(tastings)
-    .values({ ...scores, warId, wingId, userId: user.id, createdAt: now })
-    .onConflictDoUpdate({ target: [tastings.warId, tastings.userId, tastings.wingId], set: { ...scores, createdAt: now } });
+    .values({ ...scores, warId, wingId, userId: user.id })
+    .onConflictDoNothing({ target: [tastings.warId, tastings.userId, tastings.wingId] })
+    .returning({ id: tastings.id });
+  if (filed.length === 0) return fail("You've already scored this wing in this war. Scores are final.");
   redirect(`${battlegroundPath(warId, wing.spotId)}?saved=${wingId}#wing-${wingId}`);
 }
 
@@ -291,7 +292,7 @@ const warReviewSchema = spotScoresSchema.extend({
   notes: trimmed(500).default(""),
 });
 
-/** Files (or updates) your review of the restaurant itself in one war. */
+/** Files your review of the restaurant itself in one war. Reviews are final: a second one is refused. */
 export async function submitWarReview(_: FormState, form: FormData): Promise<FormState> {
   const user = await mustUser();
   const parsed = warReviewSchema.safeParse(Object.fromEntries(form));
@@ -302,10 +303,11 @@ export async function submitWarReview(_: FormState, form: FormData): Promise<For
   if ("error" in check) return fail(check.error!);
   if (!(await isBattleground(warId, spotId))) return fail("That spot isn't part of this war.");
 
-  const now = new Date();
-  await db
+  const filed = await db
     .insert(spotReviews)
-    .values({ ...scores, warId, spotId, userId: user.id, createdAt: now })
-    .onConflictDoUpdate({ target: [spotReviews.warId, spotReviews.userId, spotReviews.spotId], set: { ...scores, createdAt: now } });
+    .values({ ...scores, warId, spotId, userId: user.id })
+    .onConflictDoNothing({ target: [spotReviews.warId, spotReviews.userId, spotReviews.spotId] })
+    .returning({ id: spotReviews.id });
+  if (filed.length === 0) return fail("You've already reviewed this spot in this war. Reviews are final.");
   redirect(`${battlegroundPath(warId, spotId)}?reviewed=1#review`);
 }
